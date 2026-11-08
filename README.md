@@ -60,6 +60,8 @@ deno task test
 
 Tests use their own temporary directories and run child Deno CLIs. The design document is excluded from formatting to preserve its approved prose layout.
 
+The VS Code workspace enables the Deno extension and uses `deno.json`, matching the CLI's strict TypeScript configuration. `deno task check` uses `deno check --all` to include dependency declarations. Node typings are pinned to a version compatible with Deno's web globals; newer ambient declarations can conflict with Deno's stream, messaging, and performance interfaces. WebCrypto annotations use the `node:crypto` provider's types rather than browser/global key types, and binary helpers return ordinary `ArrayBuffer`-backed buffers accepted by WebCrypto.
+
 ## Security boundaries
 
 This is a prototype, not a production-security assurance. Callers must supply authenticated sender and recipient keys; account discovery, out-of-band key validation, revocation, and rotation belong to a separate key-management profile.

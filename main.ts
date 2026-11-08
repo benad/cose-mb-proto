@@ -27,9 +27,11 @@ function cborValue(value: unknown): unknown {
   return value;
 }
 
-export function encodeCbor(value: unknown): Promise<Buffer> {
+export async function encodeCbor(value: unknown): Promise<Buffer<ArrayBuffer>> {
   // The synchronous stream encoder truncates compound values under Deno.
-  return cbor.encodeAsync(cborValue(value), { canonical: true });
+  return Buffer.from(
+    await cbor.encodeAsync(cborValue(value), { canonical: true }),
+  );
 }
 
 export function decodeCbor(buffer: Uint8Array): unknown {
@@ -43,7 +45,11 @@ export function decodeCbor(buffer: Uint8Array): unknown {
   });
 }
 
-function bytes(value: unknown, name: string, length?: number): Buffer {
+function bytes(
+  value: unknown,
+  name: string,
+  length?: number,
+): Buffer<ArrayBuffer> {
   if (!(value instanceof Uint8Array)) {
     throw new Error(`${name} must be a CBOR byte string`);
   }
@@ -67,9 +73,9 @@ function map(value: unknown, name: string): Map<unknown, unknown> {
 }
 
 interface P256Key {
-  x: Buffer;
-  y: Buffer;
-  d?: Buffer;
+  x: Buffer<ArrayBuffer>;
+  y: Buffer<ArrayBuffer>;
+  d?: Buffer<ArrayBuffer>;
   operations?: string[];
   use?: "sig" | "enc";
   format: "cose" | "jwk";
@@ -107,7 +113,7 @@ function operations(value: unknown, format: "cose" | "jwk"): string[] {
   return result;
 }
 
-function base64Url(value: unknown, name: string): Buffer {
+function base64Url(value: unknown, name: string): Buffer<ArrayBuffer> {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(value)) {
     throw new Error(`JWK ${name} must encode exactly 32 bytes in base64url`);
   }
@@ -225,7 +231,7 @@ function checkUsage(
   if (!allowed) throw new Error(`key_ops does not permit ${operation}`);
 }
 
-function providerJwk(key: P256Key, privateKey: boolean): JsonWebKey {
+function providerJwk(key: P256Key, privateKey: boolean): webcrypto.JsonWebKey {
   return {
     kty: "EC",
     crv: curve,
@@ -235,7 +241,7 @@ function providerJwk(key: P256Key, privateKey: boolean): JsonWebKey {
   };
 }
 
-function generatedKey(jwk: JsonWebKey, privateKey: boolean): P256Key {
+function generatedKey(jwk: webcrypto.JsonWebKey, privateKey: boolean): P256Key {
   return jwkKey({
     kty: jwk.kty,
     crv: jwk.crv,
@@ -248,7 +254,7 @@ function generatedKey(jwk: JsonWebKey, privateKey: boolean): P256Key {
 async function importKey(
   key: P256Key,
   operation: "sign" | "verify" | "agree",
-): Promise<CryptoKey> {
+): Promise<webcrypto.CryptoKey> {
   checkUsage(key, operation);
   return await webcrypto.subtle.importKey(
     "jwk",
@@ -262,8 +268,8 @@ async function importKey(
   );
 }
 
-function publicMap(key: P256Key): Map<number, number | Buffer> {
-  return new Map<number, number | Buffer>([
+function publicMap(key: P256Key): Map<number, number | Buffer<ArrayBuffer>> {
+  return new Map<number, number | Buffer<ArrayBuffer>>([
     [1, 2],
     [-1, 1],
     [-2, key.x],
@@ -298,7 +304,9 @@ export async function exportPublicCoseKey(
   return await encodeCbor(publicMap(key));
 }
 
-export async function readCoseKey(buffer: Uint8Array): Promise<CryptoKeyPair> {
+export async function readCoseKey(
+  buffer: Uint8Array,
+): Promise<webcrypto.CryptoKeyPair> {
   const key = readKey(buffer, true);
   return {
     privateKey: await importKey(key, "sign"),
@@ -402,10 +410,10 @@ export async function verifyMessage(
 }
 
 async function contentKey(
-  privateKey: CryptoKey,
-  publicKey: CryptoKey,
+  privateKey: webcrypto.CryptoKey,
+  publicKey: webcrypto.CryptoKey,
   usage: "encrypt" | "decrypt",
-): Promise<CryptoKey> {
+): Promise<webcrypto.CryptoKey> {
   const secret = await webcrypto.subtle.deriveBits(
     { name: "ECDH", public: publicKey },
     privateKey,

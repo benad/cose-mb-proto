@@ -32,7 +32,7 @@ function array(encoded: Uint8Array, tag: number, length: number): unknown[] {
   return items;
 }
 
-function byteString(value: unknown): Buffer {
+function byteString(value: unknown): Buffer<ArrayBuffer> {
   assert(value instanceof Uint8Array);
   return Buffer.from(value);
 }
@@ -47,7 +47,7 @@ function asArray(value: unknown): unknown[] {
   return value;
 }
 
-function jwk(encoded: Uint8Array): JsonWebKey {
+function jwk(encoded: Uint8Array): webcrypto.JsonWebKey {
   const key = keyMap(encoded);
   return {
     kty: "EC",
@@ -64,11 +64,17 @@ function json(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
 }
 
+async function independentEncoding(
+  value: unknown,
+): Promise<Buffer<ArrayBuffer>> {
+  return Buffer.from(await cbor.encodeAsync(value, { canonical: true }));
+}
+
 async function independentKey(
-  privateKey: CryptoKey,
-  publicKey: CryptoKey,
+  privateKey: webcrypto.CryptoKey,
+  publicKey: webcrypto.CryptoKey,
   usage: "encrypt" | "decrypt",
-): Promise<CryptoKey> {
+): Promise<webcrypto.CryptoKey> {
   const shared = await webcrypto.subtle.deriveBits(
     { name: "ECDH", public: publicKey },
     privateKey,
@@ -120,9 +126,8 @@ async function independentlyOpen(
         name: "AES-GCM",
         iv: byteString(asMap(outer[1]).get(5)),
         tagLength: 128,
-        additionalData: await cbor.encodeAsync(
+        additionalData: await independentEncoding(
           ["Encrypt", byteString(outer[0]), Buffer.alloc(0)],
-          { canonical: true },
         ),
       },
       key,
@@ -155,9 +160,8 @@ async function independentlySeal(
       name: "AES-GCM",
       iv,
       tagLength: 128,
-      additionalData: await cbor.encodeAsync(
+      additionalData: await independentEncoding(
         ["Encrypt", protectedBytes, Buffer.alloc(0)],
-        { canonical: true },
       ),
     },
     key,
@@ -200,9 +204,8 @@ async function independentlySign(
   const signature = await webcrypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
     key,
-    await cbor.encodeAsync(
+    await independentEncoding(
       ["Signature1", protectedBytes, Buffer.alloc(0), byteString(payload)],
-      { canonical: true },
     ),
   );
   return await encodeCbor(
@@ -444,14 +447,13 @@ Deno.test("wire encodings and independently assembled crypto agree with the prof
       { name: "ECDSA", hash: "SHA-256" },
       verificationKey,
       byteString(inner[3]),
-      await cbor.encodeAsync(
+      await independentEncoding(
         [
           "Signature1",
           byteString(inner[0]),
           Buffer.alloc(0),
           byteString(inner[2]),
         ],
-        { canonical: true },
       ),
     ),
   );

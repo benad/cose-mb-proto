@@ -1,12 +1,16 @@
 {
   "tasks": {
     "start": "deno run --allow-read --allow-write main.ts",
-    "check": "deno check main.ts main_test.ts && deno lint && deno fmt --check",
+    "check": "deno check --all main.ts main_test.ts && deno lint && deno fmt --check",
     "test": "deno test --allow-read --allow-write --allow-run=deno main_test.ts"
   },
   "imports": {
     "webcrypto": "node:crypto",
-    "cbor": "npm:cbor@10.0.12"
+    "cbor": "npm:cbor@10.0.12",
+    "@types/node": "npm:@types/node@22.10.2"
+  },
+  "compilerOptions": {
+    "strict": true
   },
   "fmt": {
     "exclude": ["Encryption Process.md"],
