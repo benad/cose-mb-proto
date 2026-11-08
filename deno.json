@@ -1,12 +1,15 @@
 {
   "tasks": {
-    "start": "deno run --allow-read=p256-private.cbor --allow-write=p256-private.cbor,p256-public.cbor main.ts",
+    "start": "deno run --allow-read --allow-write main.ts",
     "check": "deno check main.ts main_test.ts && deno lint && deno fmt --check",
-    "test": "deno test main_test.ts"
+    "test": "deno test --allow-read --allow-write --allow-run=deno main_test.ts"
   },
   "imports": {
     "webcrypto": "node:crypto",
-    "cbor-x/decode": "npm:cbor-x@1.6.9/decode",
-    "cbor-x/encode": "npm:cbor-x@1.6.9/encode"
+    "cbor": "npm:cbor@10.0.12"
+  },
+  "fmt": {
+    "exclude": ["Encryption Process.md"],
+    "proseWrap": "preserve"
   }
 }
