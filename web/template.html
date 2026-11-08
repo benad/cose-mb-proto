@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>COSE microblogging prototype</title>
+  <style>/* OAT_CSS */</style>
+  <style>
+    [hidden] { display: none !important; }
+    body { margin: 0 auto; padding: 1.5rem; max-width: 58rem; }
+    textarea { width: 100%; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+    [role="tablist"] { flex-wrap: wrap; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .warning { border-inline-start: .25rem solid #c87800; padding: .75rem 1rem; }
+    .actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-block: 1rem; }
+    [role="status"] { min-height: 1.5rem; }
+    [data-error="true"] { color: light-dark(#a11, #ff9898); }
+    label { display: block; margin-block: 1rem .5rem; }
+    footer { margin-block-start: 2rem; }
+    dialog { max-width: 32rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>COSE microblogging prototype</h1>
+    <p>Single-recipient message profile 20261108. Everything runs locally in this page; no server or network connection is needed.</p>
+    <p class="warning"><strong>Private keys are not encrypted.</strong> Anyone with a private keypair can sign as you and decrypt messages sent to you. Save it securely. Keys and plaintext are visible to your browser and any extensions with access to this page.</p>
+    <noscript>JavaScript is required. No commands can run with JavaScript disabled.</noscript>
+    <p id="availability" role="alert" hidden></p>
+  </header>
+  <ot-tabs>
+    <div role="tablist" aria-label="Commands">
+      <button type="button" role="tab" id="tab-generate" aria-controls="panel-generate">Generate</button>
+      <button type="button" role="tab" id="tab-export" aria-controls="panel-export">Export public key</button>
+      <button type="button" role="tab" id="tab-encrypt" aria-controls="panel-encrypt">Encrypt and sign</button>
+      <button type="button" role="tab" id="tab-decrypt" aria-controls="panel-decrypt">Decrypt and verify</button>
+    </div>
+    <section role="tabpanel" id="panel-generate" aria-labelledby="tab-generate">
+      <h2>Generate private keypair</h2>
+      <p>Generate a reusable P-256 keypair for signing and receiving encrypted messages. The private keypair fills the other command tabs. Save the old key before replacing it.</p>
+      <form id="generate" autocomplete="off">
+        <button type="submit">Generate keypair</button>
+        <p role="status" id="generate-status" aria-live="polite"></p>
+        <label for="generated-private">Private keypair: base64 COSE_Key (not encrypted)</label>
+        <textarea id="generated-private" readonly rows="5" spellcheck="false"></textarea>
+        <button type="button" data-copy="generated-private">Copy base64 private keypair</button>
+        <label for="generated-jwk">Private keypair: JWK JSON (not encrypted)</label>
+        <textarea id="generated-jwk" readonly rows="9" spellcheck="false"></textarea>
+        <button type="button" data-copy="generated-jwk">Copy private JWK</button>
+      </form>
+    </section>
+    <section role="tabpanel" id="panel-export" aria-labelledby="tab-export" hidden>
+      <h2>Export public key</h2>
+      <form id="export" autocomplete="off">
+        <label for="export-private">Private keypair: base64 COSE_Key or plain JWK JSON</label>
+        <textarea id="export-private" data-private required rows="5" spellcheck="false"></textarea>
+        <button type="submit">Export public key</button>
+        <p role="status" id="export-status" aria-live="polite"></p>
+        <label for="exported-public">Public key: base64 COSE_Key</label>
+        <textarea id="exported-public" readonly rows="4" spellcheck="false"></textarea>
+        <button type="button" data-copy="exported-public">Copy base64 public key</button>
+        <label for="exported-jwk">Public key: JWK JSON</label>
+        <textarea id="exported-jwk" readonly rows="8" spellcheck="false"></textarea>
+        <button type="button" data-copy="exported-jwk">Copy public JWK</button>
+      </form>
+    </section>
+    <section role="tabpanel" id="panel-encrypt" aria-labelledby="tab-encrypt" hidden>
+      <h2>Encrypt and sign</h2>
+      <form id="encrypt" autocomplete="off">
+        <label for="encrypt-message">Plain-text UTF-8 message (empty text is allowed)</label>
+        <textarea id="encrypt-message" rows="6" spellcheck="false"></textarea>
+        <label for="encrypt-private">Sender's private keypair: base64 COSE_Key or plain JWK JSON</label>
+        <textarea id="encrypt-private" data-private required rows="5" spellcheck="false"></textarea>
+        <label for="encrypt-recipient">Recipient's public key: base64 COSE_Key or plain JWK JSON</label>
+        <textarea id="encrypt-recipient" required rows="4" spellcheck="false"></textarea>
+        <button type="submit">Encrypt and sign</button>
+        <p role="status" id="encrypt-status" aria-live="polite"></p>
+        <label for="encrypted-output">Encrypted and signed message: base64 CBOR</label>
+        <textarea id="encrypted-output" readonly rows="7" spellcheck="false"></textarea>
+        <button type="button" data-copy="encrypted-output">Copy encrypted message</button>
+      </form>
+    </section>
+    <section role="tabpanel" id="panel-decrypt" aria-labelledby="tab-decrypt" hidden>
+      <h2>Decrypt and verify</h2>
+      <form id="decrypt" autocomplete="off">
+        <label for="decrypt-message">Encrypted message: base64 CBOR</label>
+        <textarea id="decrypt-message" required rows="7" spellcheck="false"></textarea>
+        <label for="decrypt-sender">Sender's public key: base64 COSE_Key or plain JWK JSON</label>
+        <textarea id="decrypt-sender" required rows="4" spellcheck="false"></textarea>
+        <label for="decrypt-private">Recipient's private keypair: base64 COSE_Key or plain JWK JSON</label>
+        <textarea id="decrypt-private" data-private required rows="5" spellcheck="false"></textarea>
+        <button type="submit">Decrypt and verify</button>
+        <p role="status" id="decrypt-status" aria-live="polite"></p>
+        <h3 id="decrypted-label">Verified plaintext</h3>
+        <pre id="decrypted-output" aria-labelledby="decrypted-label" tabindex="0"></pre>
+        <button type="button" data-copy="decrypted-output">Copy verified plaintext</button>
+      </form>
+    </section>
+  </ot-tabs>
+  <footer>
+    <div class="actions"><button type="button" id="clear-all">Clear all fields</button></div>
+    <p id="copy-status" role="status" aria-live="polite"></p>
+    <p>Nothing is stored by this application. Closing or clearing the page is not a guarantee of secure erasure from browser memory, history, extensions, or your clipboard. Keep private keys out of shared devices and public posts.</p>
+    <p>Supply externally authenticated public keys. This prototype does not manage trust, rotation, replay detection, group messages, or platform integration. Compromise of a recipient's static private key exposes past messages; this profile does not provide forward secrecy against that compromise.</p>
+    <details><summary>Embedded software and licenses</summary><pre>/* LICENSES */</pre></details>
+  </footer>
+  <dialog id="replace-dialog" aria-labelledby="replace-title">
+    <h2 id="replace-title">Replace existing private keypair inputs?</h2>
+    <p>Save your existing private key first. Generating a new keypair will replace the private-key inputs in all three command tabs and clear their results.</p>
+    <div class="actions">
+      <button type="button" id="replace-cancel" autofocus>Cancel</button>
+      <button type="button" id="replace-confirm">Replace and generate</button>
+    </div>
+  </dialog>
+  <script>/* APP_JS */</script>
+</body>
+</html>

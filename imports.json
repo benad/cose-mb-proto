@@ -1,0 +1,11 @@
+{
+  "imports": {
+    "webcrypto": "node:crypto",
+    "cborg": "npm:cborg@6.2.1",
+    "cbor2": "npm:cbor2@2.4.1",
+    "cbor2/sorts": "npm:cbor2@2.4.1/sorts",
+    "@noble/curves/nist.js": "npm:@noble/curves@2.4.0/nist.js",
+    "@knadh/oat": "npm:@knadh/oat@1.1.0",
+    "playwright": "npm:playwright@1.64.1"
+  }
+}

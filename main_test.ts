@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
 import { Buffer } from "node:buffer";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { webcrypto } from "node:crypto";
-import cbor from "cbor";
+import { encode as independentEncode } from "cborg";
+import { Tag } from "cbor2";
+import { fromBase64, keyToJwk, toBase64 } from "./cose.ts";
 import {
   decodeCbor,
   decryptMessage,
@@ -24,9 +27,9 @@ function keyMap(encoded: Uint8Array): Map<unknown, unknown> {
 
 function array(encoded: Uint8Array, tag: number, length: number): unknown[] {
   const value = decodeCbor(encoded);
-  assert(value instanceof cbor.Tagged);
+  assert(value instanceof Tag);
   assert.equal(value.tag, tag);
-  const items: unknown = value.value;
+  const items: unknown = value.contents;
   assert(Array.isArray(items));
   assert.equal(items.length, length);
   return items;
@@ -64,10 +67,10 @@ function json(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
 }
 
-async function independentEncoding(
+function independentEncoding(
   value: unknown,
-): Promise<Buffer<ArrayBuffer>> {
-  return Buffer.from(await cbor.encodeAsync(value, { canonical: true }));
+): Buffer<ArrayBuffer> {
+  return Buffer.from(independentEncode(value));
 }
 
 async function independentKey(
@@ -176,7 +179,7 @@ async function independentlySeal(
     [-3, Buffer.from(exported.y, "base64url")],
   ]);
   return await encodeCbor(
-    new cbor.Tagged(96, [
+    new Tag(96, [
       protectedBytes,
       new Map([[5, iv]]),
       new Uint8Array(ciphertext),
@@ -209,7 +212,7 @@ async function independentlySign(
     ),
   );
   return await encodeCbor(
-    new cbor.Tagged(18, [
+    new Tag(18, [
       protectedBytes,
       new Map(),
       payload,
@@ -262,7 +265,7 @@ Deno.test("key reader rejects invalid types, points, scalars, and mismatched pai
           "hex",
         ),
       ],
-      [-2, new cbor.Tagged(64, new Uint8Array(32))],
+      [-2, new Tag(64, new Uint8Array(32))],
     ] as const
   ) {
     const valueMap = keyMap(encoded);
@@ -324,14 +327,37 @@ Deno.test("strict CBOR rejects duplicates, trailing data, tags, and excessive ne
     ]);
     await assert.rejects(() => readCoseKey(encoded), /Duplicate/);
   }
-  assert.throws(() => decodeCbor(new Uint8Array([1, 2])), /Unexpected/);
+  assert.throws(() => decodeCbor(new Uint8Array([1, 2])), /Extra data/);
+  assert.throws(
+    () => decodeCbor(Buffer.from("a20001f9800002", "hex")),
+    /Duplicate/,
+  );
   assert.throws(() => decodeCbor(new Uint8Array([0xa1])));
   assert.throws(() => decodeCbor(new Uint8Array()));
   assert.throws(() => decodeCbor(Buffer.from("81".repeat(20) + "f6", "hex")));
   assert.throws(() => decodeCbor(Buffer.from("61ff", "hex")));
   await assert.rejects(async () =>
-    readCoseKey(await encodeCbor(new cbor.Tagged(101, keyMap(original))))
+    readCoseKey(await encodeCbor(new Tag(101, keyMap(original))))
   );
+  assert.deepEqual(
+    decodeCbor(Buffer.from("bf015f4201024103ffff", "hex")),
+    new Map([[1, new Uint8Array([1, 2, 3])]]),
+  );
+});
+
+Deno.test("portable base64 and JWK representations interoperate with CLI bytes", async () => {
+  const data = Uint8Array.from({ length: 65538 }, (_, index) => index % 256);
+  assert.equal(toBase64(data), Buffer.from(data).toString("base64"));
+  const wrapped = toBase64(data).replace(/.{76}/g, "$&\r\n");
+  assert.deepEqual(fromBase64(wrapped), data);
+  for (const invalid of ["AA", "A===", "AA=A", "AB==", "AA-_", "AA==!"]) {
+    assert.throws(() => fromBase64(invalid));
+  }
+  const privateKey = await generateCoseKey();
+  const publicKey = await exportPublicCoseKey(privateKey);
+  assert(isDeepStrictEqual(keyToJwk(privateKey, true), jwk(privateKey)));
+  assert.deepEqual(keyToJwk(publicKey, false), jwk(publicKey));
+  assert(!("d" in keyToJwk(publicKey, false)));
 });
 
 Deno.test("two-account round-trip preserves empty, Unicode, and multiline text with COSE and JWK", async () => {
@@ -503,7 +529,7 @@ Deno.test("original protected bytes are preserved and non-critical headers may b
   asMap(inner[1]).set(900, "ignored");
   assert.equal(
     await verifyMessage(
-      await encodeCbor(new cbor.Tagged(18, inner)),
+      await encodeCbor(new Tag(18, inner)),
       alicePublic,
     ),
     "original bytes",
@@ -525,7 +551,7 @@ Deno.test("tampered ciphertext, keys, and encryption structures are rejected", a
   const mutations: Array<(value: unknown[]) => void> = [
     (value) => value.pop(),
     (value) => value[0] = Buffer.from("a10101", "hex"),
-    (value) => value[0] = new cbor.Tagged(64, byteString(value[0])),
+    (value) => value[0] = new Tag(64, byteString(value[0])),
     (value) => asMap(value[1]).set(5, Buffer.alloc(11)),
     (value) => asMap(value[1]).set(5, Buffer.alloc(12)),
     (value) => value[2] = Buffer.alloc(16),
@@ -567,7 +593,7 @@ Deno.test("tampered ciphertext, keys, and encryption structures are rejected", a
     await assert.rejects(
       async () =>
         decryptMessage(
-          await encodeCbor(new cbor.Tagged(96, value)),
+          await encodeCbor(new Tag(96, value)),
           bob,
           alicePublic,
         ),
@@ -578,7 +604,7 @@ Deno.test("tampered ciphertext, keys, and encryption structures are rejected", a
   );
   await assert.rejects(async () =>
     decryptMessage(
-      await encodeCbor(new cbor.Tagged(16, array(original, 96, 4))),
+      await encodeCbor(new Tag(16, array(original, 96, 4))),
       bob,
       alicePublic,
     )
@@ -615,7 +641,7 @@ Deno.test("Sign1 validation rejects bad signatures, payloads, and critical heade
     const value = array(signed, 18, 4);
     mutate(value);
     await assert.rejects(async () =>
-      verifyMessage(await encodeCbor(new cbor.Tagged(18, value)), alicePublic)
+      verifyMessage(await encodeCbor(new Tag(18, value)), alicePublic)
     );
   }
   for (
@@ -633,7 +659,7 @@ Deno.test("Sign1 validation rejects bad signatures, payloads, and critical heade
   badSignature[3] = Buffer.alloc(64);
   const bob = await generateCoseKey();
   const encrypted = await independentlySeal(
-    await encodeCbor(new cbor.Tagged(18, badSignature)),
+    await encodeCbor(new Tag(18, badSignature)),
     await exportPublicCoseKey(bob),
   );
   await assert.rejects(
@@ -849,7 +875,7 @@ Deno.test("CLI round-trips files and text options without clobbering outputs or 
     tampered[2] = ciphertext;
     await Deno.writeFile(
       join(directory, "tampered.cbor"),
-      await encodeCbor(new cbor.Tagged(96, tampered)),
+      await encodeCbor(new Tag(96, tampered)),
     );
     for (const outputFile of [false, true]) {
       const output = await cli(directory, [

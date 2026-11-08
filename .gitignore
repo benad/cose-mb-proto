@@ -4,3 +4,4 @@ p256.cose
 p256-private.cbor
 p256-public.cbor
 local/
+out/

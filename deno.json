@@ -1,19 +1,18 @@
 {
   "tasks": {
     "start": "deno run --allow-read --allow-write main.ts",
-    "check": "deno check --all main.ts main_test.ts && deno lint && deno fmt --check",
+    "build:web": "deno run --allow-read --allow-write --allow-run=deno build_web.ts",
+    "check:web": "deno task build:web --check",
+    "test:web": "deno run --allow-read=out/cose-mb.html --allow-run=docker,deno --allow-net=127.0.0.1 test_web.ts",
+    "check": "deno check --all main.ts main_test.ts build_web.ts test_web.ts && deno check --all --config=tests/browser/deno.json --lock=deno.lock --frozen-lockfile tests/browser/browser_test.ts && deno lint && deno fmt --check && deno task check:web",
     "test": "deno test --allow-read --allow-write --allow-run=deno main_test.ts"
   },
-  "imports": {
-    "webcrypto": "node:crypto",
-    "cbor": "npm:cbor@10.0.12",
-    "@types/node": "npm:@types/node@22.10.2"
-  },
+  "importMap": "./imports.json",
   "compilerOptions": {
     "strict": true
   },
   "fmt": {
-    "exclude": ["Encryption Process.md"],
+    "exclude": ["Encryption Process.md", "out/", "web/template.html"],
     "proseWrap": "preserve"
   }
 }

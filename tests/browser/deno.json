@@ -1,0 +1,9 @@
+{
+  "importMap": "../../imports.json",
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "esnext", "deno.ns"],
+    "types": ["./browser_types.d.ts"],
+    "strict": true
+  },
+  "lock": false
+}
