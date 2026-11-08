@@ -1,8 +1,10 @@
 # Person-to-Person Encrypted Message Profile
 
-Document version ID: 20261025
+Document version ID: 20261108
 
 Profile ID: TBD
+
+This message profile is restricted to exactly one recipient. Group messages and group key exchange are separate message profiles and are outside this profile. A future application-level CBOR wrapper will identify message profiles such as public keys, single-recipient messages, group messages, and group key exchange. This document specifies the single-recipient COSE object inside that wrapper; it does not define the wrapper's encoding.
 
 > [!IMPORTANT]
 > 
@@ -16,6 +18,16 @@ Profile ID: TBD
 > * The recipient decryption key is determined from the transport-level recipient identifier.
 >
 > Implementations MUST NOT assume that a `kid` is present in either `COSE_Sign1` or `COSE_Encrypt`.
+
+## Common Encoding and Validation Requirements
+
+The COSE structures and processing follow RFC 9052, the ECDH and HKDF algorithms follow RFC 9053, and ESP256 is defined by RFC 9864.
+
+Implementations MUST reject duplicate labels in every CBOR map, including key, protected-header, unprotected-header, and application-payload maps. A decoder that silently overwrites duplicate labels is not sufficient.
+
+This profile also rejects a header label appearing in both the protected and unprotected buckets of the same layer. Unknown critical header parameters MUST cause rejection; unknown non-critical parameters MAY be ignored.
+
+The `Sig_structure`, `Enc_structure`, and `COSE_KDF_Context` MUST use deterministic CBOR encoding with definite lengths and shortest argument encodings. Cryptographic computations MUST use the original protected-header byte strings received on the wire, not a decoded and re-encoded header map.
 
 
 # Step 1: Load the Sender Static Private Key and Recipient Static Public Key
@@ -37,9 +49,15 @@ Recipient:
     ECDH-ES key agreement
 ```
 
-The sender private key is used only for signing.
+In this sending operation, the sender static private key is used only for signing. ECDH uses a fresh sender ephemeral private key.
 
 The recipient public key is used later during ECDH-ES encryption to derive shared key material.
+
+Each account uses one reusable static P-256 key pair: its private key signs outgoing messages and performs ECDH when receiving messages; its public key verifies signatures and is used by others when encrypting to that account.
+
+Stored static COSE_Key and JWK representations MUST omit `alg`. Algorithms are selected in the appropriate COSE message headers: ESP256 (`-9`) for signatures and ECDH-ES+HKDF-256 (`-25`) for recipient key agreement. A signing-only `alg` value MUST NOT be silently ignored to permit ECDH use. Existing algorithm-restricted keys require explicit conversion to the algorithm-neutral representation before they can serve both roles.
+
+If usage restrictions such as COSE `key_ops` or JWK `use`/`key_ops` are present, they MUST be enforced. Reusable key files SHOULD omit these role-specific restrictions. The crypto provider's key objects MUST be imported with only the usages needed for the current operation.
 
 The implementation SHOULD accept either:
 
@@ -55,7 +73,6 @@ and convert the result into the crypto provider's internal key representation.
 ```cbor
 {
   1: 2,      / kty = EC2 /
-  3: -9,     / alg = ESP256 /
   -1: 1,     / crv = P-256 /
 
   -2: h'65ed...',
@@ -87,7 +104,6 @@ and convert the result into the crypto provider's internal key representation.
 | Label | Meaning |
 |---------|---------|
 | 1 | Key Type (EC2) |
-| 3 | Algorithm (ESP256) |
 | -1 | Curve (P-256) |
 | -2 | Public X Coordinate |
 | -3 | Public Y Coordinate |
@@ -101,7 +117,6 @@ and convert the result into the crypto provider's internal key representation.
 {
   "kty": "EC",
   "crv": "P-256",
-  "alg": "ES256",
   "x": "Ze2lo...",
   "y": "HlLtd...",
   "d": "UZtCP..."
@@ -182,6 +197,8 @@ kty == EC (JWK)
 
 curve == P-256
 
+alg absent
+
 x present
 y present
 d present
@@ -195,6 +212,8 @@ or
 kty == EC (JWK)
 
 curve == P-256
+
+alg absent
 
 x present
 y present
@@ -214,6 +233,12 @@ RSA
 
 for this profile.
 
+The same validation rules apply to the recipient static private key used for decryption and the sender static public key used for signature verification. Public COSE keys MUST NOT contain `-4`; public JWKs MUST NOT contain `d`.
+
+All public keys MUST represent a finite point Q on P-256. Both coordinates MUST be in the curve's field and satisfy its curve equation. Reject the point at infinity and invalid points; coordinate lengths alone are not sufficient.
+
+For private keys, the scalar d MUST satisfy `1 <= d < n`, where n is the P-256 subgroup order. The supplied public point MUST equal `d * G`, where G is the P-256 generator. A key import operation that checks only types and lengths does not satisfy these validation requirements.
+
 ---
 
 ## 1.6 Length Requirements
@@ -226,6 +251,8 @@ y = exactly 32 bytes
 d = exactly 32 bytes
 ```
 
+COSE `x`, `y`, and `d` values MUST be byte strings. JWK values MUST decode from base64url to the same fixed-width byte strings. Compressed-point representations are not accepted by this profile.
+
 All values are:
 
 ```
@@ -234,7 +261,7 @@ big-endian
 fixed width (32 octets)
 ```
 
-If a value exceeds 32 bytes:
+If a value is shorter or longer than 32 bytes:
 
 ```
 reject the key
@@ -661,7 +688,7 @@ COSE_Encrypt
 Encrypted Message
 ```
 
-Although COSE supports multiple recipients, this profile uses exactly one recipient.
+This message profile MUST contain exactly one recipient. Group messaging is a separate message profile, not an extension of this profile's recipients array.
 
 ```
 recipient count = 1
@@ -701,7 +728,7 @@ BAD:
     reuse one ephemeral key for multiple messages
 ```
 
-The ephemeral key pair provides forward secrecy.
+Fresh ephemeral keys provide fresh per-message shared secrets, but this ephemeral-static scheme does not provide forward secrecy against compromise of the recipient's static private key. An attacker holding that key can recompute shared secrets for recorded messages using their transmitted ephemeral public keys. The ephemeral private key MUST NOT be persisted or reused.
 
 ---
 
@@ -731,6 +758,8 @@ CBOR-EDN:
 ```
 
 Only the public components are transmitted.
+
+The ephemeral COSE_Key MUST NOT contain `-4` or an `alg` member and MUST satisfy the public-point validation requirements in Step 1.
 
 The ephemeral private key MUST remain secret.
 
@@ -780,7 +809,7 @@ The shared secret is not used directly as an encryption key.
 This profile uses:
 
 ```
-ECDH-ES
+ECDH-ES+HKDF-256 (COSE algorithm -25)
 ```
 
 The shared secret is passed through the COSE ECDH-ES key derivation process to produce the Content Encryption Key (CEK).
@@ -791,9 +820,11 @@ Conceptually:
 CEK =
     ECDH-ES-KDF(
         sharedSecret,
-        protectedHeaders
+        recipientProtected
     )
 ```
+
+Here `recipientProtected = h''`. The KDF's protected data is the recipient protected-header byte string, not the COSE_Encrypt content protected header. The complete context is fixed by Appendix A.
 
 See Appendix A for ECDH-ES-KDF.
 
@@ -868,22 +899,23 @@ The protected header will be authenticated by AES-GCM.
 
 ## 3.7 Construct the Unprotected Header
 
-The unprotected header contains:
+The COSE_Encrypt content unprotected header contains only the IV:
 
-* The AES-GCM initialization vector (IV).
-* The sender's ephemeral public key.
+```cbor
+{
+  5: h'112233445566778899aabbcc'
+      / IV: 12 bytes, generated randomly for this message /
+}
+```
+
+The ephemeral public key belongs to a separate COSE_recipient structure. For this profile the recipient protected header is the zero-length byte string `h''`. The recipient unprotected header contains the key agreement algorithm and the sender's ephemeral public key:
 
 CBOR-EDN:
 
 ```cbor
 {
-  5: h'112233445566778899aabbcc'
-      / IV
-         header parameter: IV
-         12 bytes
-         96 bits
-         random value
-         public information /,
+  1: -25
+      / alg = ECDH-ES+HKDF-256 /,
 
  -1: {
        1: 2,
@@ -914,22 +946,33 @@ CBOR-EDN:
 }
 ```
 
-For this profile, the sender's ephemeral public key (epk) is carried directly in the COSE_Encrypt unprotected header.
+The single COSE_recipient is:
+
+```cbor
+[
+  h'',                         / recipient protected header /
+  { 1: -25, -1: epk },         / recipient unprotected header /
+  h''                          / no encrypted key: CEK is derived directly /
+]
+```
+
+The `epk` name above denotes the ephemeral COSE_Key map. It is not an additional wire field. The recipient ciphertext is empty because this profile uses direct key agreement, not key wrapping. Nested recipients are absent.
 
 ### Field Summary
 
 | Label | Meaning |
 |---------|---------|
-| 5 | IV (Initialization Vector) |
-| -1 (outer) | epk (Ephemeral Public Key) |
-| 1 | kty (Key Type) |
+| 5 (content header) | IV (Initialization Vector) |
+| 1 (recipient header) | Algorithm (ECDH-ES+HKDF-256) |
+| -1 (recipient header) | epk (Ephemeral Public Key) |
+| 1 (inside COSE_Key) | kty (Key Type) |
 | -1 (inside COSE_Key) | crv (Curve) |
 | -2 | X Coordinate |
 | -3 | Y Coordinate |
 
 ### Purpose
 
-The recipient needs both values contained in this header:
+The recipient needs the IV from the content header and the ephemeral public key from the recipient header:
 
 ```
 IV
@@ -984,8 +1027,14 @@ where:
 
 ```
 AAD =
-    protected header bytes
+    CBOR.encode([
+        "Encrypt",
+        protectedHeaderBytes,
+        h''
+    ])
 ```
+
+This is the COSE `Enc_structure`, using the original COSE_Encrypt protected header bytes and an empty `external_aad`. The content protected header bytes alone MUST NOT be used as AAD.
 
 Perform:
 
@@ -1022,10 +1071,10 @@ tag
 
 separately.
 
-For the document, simply refer to the resulting encrypted bytes as:
+For A256GCM the authentication tag MUST be 16 bytes (128 bits). The serialized COSE ciphertext MUST contain the encrypted bytes followed by this tag:
 
 ```
-ciphertext
+ciphertext = encryptedBytes || authenticationTag
 ```
 
 ---
@@ -1044,21 +1093,33 @@ CBOR-EDN:
   {
     5: h'112233445566778899aabbcc'
         / IV
-           12 bytes /,
-
-   -1: {
-         1: 2,
-        -1: 1,
-
-        -2: h'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-        -3: h'YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY'
-       }
-        / ephemeral public key /
+           12 bytes /
   },
 
   h'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
       / encrypted COSE_Sign1
-         includes AES-GCM authentication tag /
+         includes 16-byte AES-GCM authentication tag /,
+
+  [
+    [
+      h''
+          / recipient protected header /,
+      {
+        1: -25,
+            / alg = ECDH-ES+HKDF-256 /
+        -1: {
+              1: 2,
+             -1: 1,
+             -2: h'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+             -3: h'YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY'
+            }
+            / epk: ephemeral public key only /
+      },
+      h''
+          / no encrypted key /
+    ]
+  ]
+      / recipients array: exactly one COSE_recipient /
 ])
 ```
 
@@ -1069,10 +1130,11 @@ Field meanings:
 | 0 | Protected Header |
 | 1 | Unprotected Header |
 | 2 | Ciphertext |
+| 3 | Recipients (exactly one) |
 
 The `96(...)` wrapper indicates a CBOR tag 96 (`COSE_Encrypt`).
 
-Although there is only a single recipient, this profile continues to use `COSE_Encrypt` rather than `COSE_Encrypt0` so that future multi-recipient support can be introduced with minimal structural changes.
+This profile uses COSE_Encrypt because it carries explicit ECDH recipient information, even though only one recipient is permitted. Group messaging and group key exchange will be defined as separate message profiles in the future application-level CBOR wrapper.
 
 ---
 
@@ -1091,7 +1153,8 @@ COSE_Encrypt
 (
     protected,
     unprotected,
-    ciphertext
+    ciphertext,
+    recipients
 )
 ```
 
@@ -1199,7 +1262,8 @@ Expected structure:
 96([
   protected,
   unprotected,
-  ciphertext
+  ciphertext,
+  recipients
 ])
 ```
 
@@ -1208,6 +1272,7 @@ Validation:
 * Top-level object MUST exist.
 * Top-level object MUST be tagged.
 * Tag MUST be 96 (COSE_Encrypt).
+* Duplicate CBOR map labels MUST be rejected throughout decoding.
 
 ---
 
@@ -1219,7 +1284,8 @@ Expected structure:
 96([
   protected,
   unprotected,
-  ciphertext
+  ciphertext,
+  recipients
 ])
 ```
 
@@ -1230,11 +1296,20 @@ Field meanings:
 | 0 | Protected Header |
 | 1 | Unprotected Header |
 | 2 | Ciphertext |
+| 3 | Recipients (exactly one) |
 
 Validation:
 
 * Object MUST be an array.
-* Array length MUST be exactly 3.
+* Array length MUST be exactly 4.
+* Recipients MUST be an array containing exactly one COSE_recipient.
+* That COSE_recipient MUST be an array of exactly 3 elements.
+* Its protected header MUST be the zero-length byte string `h''`.
+* Its unprotected header MUST be a CBOR map.
+* Its header parameter 1 MUST equal -25 (ECDH-ES+HKDF-256).
+* Its header parameter -1 MUST contain the ephemeral public COSE_Key.
+* Its ciphertext MUST be the zero-length byte string `h''`.
+* Nested recipients and additional recipients MUST be rejected.
 
 ---
 
@@ -1268,19 +1343,17 @@ Validation:
 
 ## 4.4 Validate the Unprotected Header
 
-The unprotected header must contain:
+The COSE_Encrypt content unprotected header must contain:
 
 ```
 IV
-ephemeral public key
 ```
 
 Expected:
 
 ```cbor
 {
-  5: iv,
- -1: epk
+  5: iv
 }
 ```
 
@@ -1288,7 +1361,8 @@ Validation:
 
 * Unprotected header MUST be a CBOR map.
 * Header parameter 5 MUST exist.
-* Header parameter -1 MUST exist.
+
+The ephemeral public key is obtained from the single recipient's unprotected header, not from the content header. See Steps 4.2 and 4.6.
 
 ---
 
@@ -1311,7 +1385,7 @@ Purpose: AES-256-GCM initialization vector
 
 ## 4.6 Validate the Ephemeral Public Key
 
-Header parameter:
+Header parameter -1 in the single recipient's unprotected header:
 
 ```cbor
 -1: {
@@ -1336,8 +1410,13 @@ Validation:
 * `crv` MUST equal P-256.
 * `x` coordinate MUST exist.
 * `y` coordinate MUST exist.
+* `x` and `y` MUST be byte strings.
 * `x` length MUST equal 32 bytes.
 * `y` length MUST equal 32 bytes.
+* `-4` (private scalar) MUST NOT be present.
+* `alg` MUST NOT be present.
+* The coordinates MUST represent a finite, valid P-256 point as specified
+  in Step 1.
 
 ---
 
@@ -1353,6 +1432,7 @@ Validation:
 
 * Ciphertext MUST be a byte string.
 * Ciphertext MUST NOT be empty.
+* Ciphertext MUST include a 16-byte AES-GCM authentication tag.
 
 ---
 
@@ -1433,11 +1513,13 @@ Using the same ECDH-ES key derivation process used by the sender:
 CEK =
     ECDH-ES-KDF(
         sharedSecret,
-        protectedHeader
+        recipientProtected
     )
 ```
 
 See Appendix A for ECDH-ES-KDF.
+
+Here `recipientProtected = h''`, validated in Step 4.2. The content protected header is used in the Enc_structure, not in the recipient KDF context.
 
 Result:
 
@@ -1466,8 +1548,14 @@ IV
 ciphertext
 
 AAD =
-    protected header bytes
+    CBOR.encode([
+        "Encrypt",
+        protectedHeaderBytes,
+        h''
+    ])
 ```
+
+Use the original content protected-header byte string and an empty `external_aad`, exactly as in Step 3.8. The last 16 bytes of the serialized ciphertext are the AES-GCM authentication tag.
 
 Perform:
 
@@ -1616,12 +1704,9 @@ Authenticated Payload
 ---
 
 > [!IMPORTANT]
-> This profile does not include the COSE `kid` (Key Identifier)
-> header parameter.
+> This profile does not include the COSE `kid` (Key Identifier) header parameter.
 >
-> Sender key selection is performed using application-level identity
-> and transport metadata rather than identifiers carried within the
-> COSE object itself.
+> Sender key selection is performed using application-level identity and transport metadata rather than identifiers carried within the COSE object itself.
 >
 > For example:
 >
@@ -1630,8 +1715,7 @@ Authenticated Payload
 > * A profile document or account metadata may contain the sender's
 >   current signing key.
 >
-> Implementations MUST NOT assume that a `kid` is present in the
-> `COSE_Sign1` object.
+> Implementations MUST NOT assume that a `kid` is present in the `COSE_Sign1` object.
 
 ---
 
@@ -2042,10 +2126,13 @@ The sender SHALL generate a new ephemeral key pair for every encrypted message.
 
 The ephemeral public key SHALL be included in the recipient's unprotected header using the `epk` parameter.
 
+The same recipient unprotected header SHALL include `alg: -25` (ECDH-ES+HKDF-256). Its protected header SHALL be `h''`, and its ciphertext SHALL be `h''` because no key is wrapped or transported.
+
 Example:
 
 ```cbor-diag
 {
+  1: -25,
   -1: {
     1: 2,
     -1: 1,
@@ -2085,11 +2172,7 @@ The resulting value `Z` becomes the input keying material for HKDF.
 
 This profile uses the COSE ECDH-ES HKDF context structure.
 
-Only the algorithm identifier and key length are included.
-
-No PartyUInfo fields are used.
-
-No PartyVInfo fields are used.
+The context includes the content encryption algorithm identifier, the two required party-information arrays, and SuppPubInfo. The party-information fields are null because this profile supplies no party identities or nonces. SuppPubInfo contains the key length and the required empty recipient protected-header byte string. Optional fields are omitted.
 
 The context therefore consists of:
 
@@ -2098,19 +2181,18 @@ COSE_KDF_Context = [
     AlgorithmID,
     PartyUInfo,
     PartyVInfo,
-    SuppPubInfo,
-    SuppPrivInfo
+    SuppPubInfo
 ]
 ```
 
 with the following values:
 
 ```text
-AlgorithmID  = "A256GCM"
-PartyUInfo   = empty
-PartyVInfo   = empty
-SuppPubInfo  = KeyDataLength(256)
-SuppPrivInfo = empty
+AlgorithmID  = 3
+PartyUInfo   = [null, null, null]
+PartyVInfo   = [null, null, null]
+SuppPubInfo  = [256, h'']
+SuppPrivInfo = omitted
 ```
 
 ---
@@ -2133,18 +2215,17 @@ where:
 | Element | Value |
 |----------|--------|
 | AlgorithmID | `3`: A256GCM |
-| PartyUInfo | empty |
-| PartyVInfo | empty |
+| PartyUInfo | `[null, null, null]` |
+| PartyVInfo | `[null, null, null]` |
 | KeyDataLength | `256` |
-| Protected Data | absent |
+| Protected Data | `h''` (empty recipient protected header) |
 | SuppPrivInfo | absent |
 
 ---
 
 ### A.7 HKDF Parameters and CEK Derivation
 
-HKDF transforms the raw ECDH shared secret into the 256-bit Content
-Encryption Key (CEK) used by A256GCM.
+HKDF transforms the raw ECDH shared secret into the 256-bit Content Encryption Key (CEK) used by A256GCM.
 
 The HKDF operation SHALL use the following parameters:
 
@@ -2160,8 +2241,7 @@ The parameters have the following meanings.
 
 **Hash Function**
 
-SHA-256 is the hash function used by both the extract and expand
-operations of HKDF.
+SHA-256 is the hash function used by both the extract and expand operations of HKDF.
 
 ```text
 Hash = SHA-256
@@ -2169,11 +2249,9 @@ Hash = SHA-256
 
 **Salt**
 
-The salt is an optional, non-secret input to the HKDF extract
-operation.
+The salt is an optional, non-secret input to the HKDF extract operation.
 
-This profile does not transmit or otherwise define a salt value.
-Implementations SHALL therefore use a zero-length byte string:
+This profile does not transmit or otherwise define a salt value. Implementations SHALL therefore use a zero-length byte string:
 
 ```cbor-diag
 h''
@@ -2185,10 +2263,7 @@ Conceptually:
 Salt = empty byte string
 ```
 
-If an HKDF API permits the salt parameter to be omitted and defines
-omission according to HKDF, omission may be used instead. If the API
-requires an explicit value, the implementation SHALL supply a
-zero-length byte string.
+If an HKDF API permits the salt parameter to be omitted and defines omission according to HKDF, omission may be used instead. If the API requires an explicit value, the implementation SHALL supply a zero-length byte string.
 
 The HKDF salt is separate from:
 
@@ -2203,8 +2278,7 @@ The A256GCM initialization vector MUST NOT be used as the HKDF salt.
 
 IKM means *Input Keying Material*.
 
-For this profile, the IKM is the raw ECDH shared secret, denoted by
-`Z`:
+For this profile, the IKM is the raw ECDH shared secret, denoted by `Z`:
 
 ```text
 IKM = Z
@@ -2228,19 +2302,15 @@ Z = ECDH(
     )
 ```
 
-Both computations produce the same value. For P-256, `Z` is the
-32-byte ECDH shared secret produced by the cryptographic provider.
+Both computations produce the same value. For P-256, `Z` is the 32-byte ECDH shared secret produced by the cryptographic provider.
 
 `Z` MUST NOT be used directly as an A256GCM key.
 
 **Info**
 
-`Info` is the context supplied to the HKDF expand operation. It binds
-the derived key to the algorithm and output-key size selected by this
-profile.
+`Info` is the context supplied to the HKDF expand operation. It binds the derived key to the algorithm and output-key size selected by this profile.
 
-`Info` SHALL be the CBOR encoding of the following
-`COSE_KDF_Context`:
+`Info` SHALL be the CBOR encoding of the following `COSE_KDF_Context`:
 
 ```cbor-diag
 [
@@ -2270,24 +2340,19 @@ Their meanings are:
   identity, nonce, or other party information is supplied.
 - `256` is `keyDataLength`, expressed in bits.
 - `h''` is the required `protected` member of `SuppPubInfo`. It is an
-  empty byte string because this profile supplies no protected
-  recipient-level attributes to the KDF.
+  empty byte string because the recipient protected header is `h''`.
+  The recipient algorithm (`-25`) and `epk` are in its unprotected header.
+  The content protected header (`<< {1: 3} >>`) is not used in this field.
 - The optional `other` member of `SuppPubInfo` is omitted.
 - The optional `SuppPrivInfo` element is omitted.
 
-The algorithm identifier MUST be encoded as the integer `3`. It MUST
-NOT be encoded as the text string `"A256GCM"`.
+The algorithm identifier MUST be encoded as the integer `3`. It MUST NOT be encoded as the text string `"A256GCM"`.
 
-The `protected` member in `SuppPubInfo` MUST be encoded as the empty
-byte string `h''`. It MUST NOT be encoded as `null`.
+The `protected` member in `SuppPubInfo` MUST be encoded as the empty byte string `h''`. It MUST NOT be encoded as `null`.
 
-Optional elements that are absent MUST be omitted. Implementations
-MUST NOT append `null` values for the optional `other` or
-`SuppPrivInfo` fields.
+Optional elements that are absent MUST be omitted. Implementations MUST NOT append `null` values for the optional `other` or `SuppPrivInfo` fields.
 
-Both sender and recipient MUST construct and encode exactly the same
-context. Any difference in its CBOR encoding produces different HKDF
-input and therefore a different CEK.
+Both sender and recipient MUST construct and encode exactly the same context. Any difference in its CBOR encoding produces different HKDF input and therefore a different CEK.
 
 Conceptually:
 
@@ -2338,8 +2403,7 @@ CEK = HKDF-SHA256(
       )
 ```
 
-An implementation that exposes the two HKDF stages separately may
-express the same operation as:
+An implementation that exposes the two HKDF stages separately may express the same operation as:
 
 ```text
 PRK = HKDF-Extract(
@@ -2356,12 +2420,9 @@ CEK = HKDF-Expand(
       )
 ```
 
-The resulting `CEK` is exactly 32 bytes and SHALL be used directly as
-the A256GCM encryption or decryption key.
+The resulting `CEK` is exactly 32 bytes and SHALL be used directly as the A256GCM encryption or decryption key.
 
-The intermediate values `Z` and `PRK` are secret key material. They
-MUST NOT be transmitted, logged, persisted unnecessarily, or included
-in the COSE message.
+The intermediate values `Z` and `PRK` are secret key material. They MUST NOT be transmitted, logged, persisted unnecessarily, or included in the COSE message.
 
 ---
 
@@ -2370,6 +2431,8 @@ in the COSE message.
 The derived CEK SHALL be used directly as the A256GCM key.
 
 A fresh 96-bit IV SHALL be generated for every encryption operation.
+
+The authentication tag SHALL be 128 bits. The AAD SHALL be the deterministic CBOR encoding of `["Encrypt", contentProtectedBytes, h'']`, using the original content protected-header bytes and empty external AAD.
 
 ```text
 ciphertext = AES-256-GCM(
@@ -2386,14 +2449,16 @@ ciphertext = AES-256-GCM(
 
 Upon receipt of an encrypted message, the recipient SHALL:
 
-1. Extract the sender's ephemeral public key (`epk`).
+1. Validate the single recipient and its ECDH-ES+HKDF-256 (`-25`) algorithm;
+   extract the sender's ephemeral public key (`epk`) from its unprotected header.
 2. Perform ECDH using:
    - the recipient's private key, and
    - the sender's ephemeral public key.
 3. Reconstruct the same COSE KDF context.
 4. Run HKDF-SHA256.
 5. Obtain the 256-bit CEK.
-6. Decrypt the ciphertext using A256GCM.
+6. Decrypt the ciphertext using A256GCM and the Enc_structure AAD defined
+   in Step 4.11; then verify the embedded COSE_Sign1 before releasing its payload.
 
 Because both parties compute the same ECDH shared secret and use the same KDF context, they derive identical CEKs.
 
@@ -2404,13 +2469,18 @@ Because both parties compute the same ECDH shared secret and use the same KDF co
 This profile imposes the following requirements:
 
 - A new ephemeral key pair SHALL be generated for every encrypted message.
-- The ephemeral public key SHALL be transmitted using `epk`.
+- COSE_Encrypt SHALL contain exactly one COSE_recipient.
+- The recipient unprotected header SHALL contain `alg: -25` and `epk`.
+- The ephemeral public key SHALL NOT contain private key material.
+- The recipient protected header and ciphertext SHALL each be `h''`.
 - No `kid` values are used.
-- PartyUInfo SHALL be empty.
-- PartyVInfo SHALL be empty.
-- The KDF context SHALL contain only:
-  - `AlgorithmID = "A256GCM"`
-  - `KeyDataLength = 256`
+- PartyUInfo and PartyVInfo SHALL each be `[null, null, null]`.
+- The complete KDF context SHALL be
+  `[3, [null, null, null], [null, null, null], [256, h'']]`.
+- Optional KDF context elements SHALL be omitted, not encoded as null.
 - HKDF-SHA256 SHALL be used.
+- The HKDF salt SHALL be `h''`, not the IV.
 - The HKDF output length SHALL be 32 bytes.
 - The derived key SHALL be used directly as the A256GCM content encryption key.
+- A256GCM SHALL use a fresh 12-byte IV and a 16-byte authentication tag.
+- AAD SHALL be CBOR encoding of `["Encrypt", contentProtectedBytes, h'']`.
