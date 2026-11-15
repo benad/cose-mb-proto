@@ -1,16 +1,22 @@
 # Single-Recipient Encrypted Message Example
 
-Profile document version: `20261108`, as specified in [Singe-Recipient Encrypted Message Profile](Singe-Recipient%20Encrypted%20Message%20Profile.md). This example uses the same single-recipient profile implemented by `cose.ts`: ESP256 COSE_Sign1 inside COSE_Encrypt, with ephemeral P-256 ECDH, HKDF-SHA-256, and AES-256-GCM.
+Document version ID: 20261115
 
-> **TEST ONLY.** Both supplied static private keys, the example ephemeral private key, and all derived secrets below are deliberately public test material. Never use these keys for real accounts or confidential messages. Publishing the receiver private key makes this message decryptable by anyone; publishing the sender private key lets anyone forge messages from this test sender.
+This end-to-end example follows [Encrypted Message Payload](Encrypted%20Message%20Payload.md), [COSE-MB Messages](COSE-MB%20Messages.md), and [Encoded Message to Text](Encoded%20Message%20to%20Text.md), version 20261115. The linked [Single-Recipient Encrypted Message Profile](Singe-Recipient%20Encrypted%20Message%20Profile.md) currently declares version 20261111; its cryptographic construction is used here as profile ID 2.
 
-This is one concrete, verified encryption run. Its signature, ephemeral keypair, and IV were generated for this example. A new encryption of the same text with the same static keys normally produces different bytes. The ephemeral private key was made extractable only to expose the intermediate values here; the production implementation generates it non-extractable. Do not reuse the example ephemeral key or IV for production encryption.
+The complete path is UTF-8 data → payload map → ESP256 COSE_Sign1 → A256GCM COSE_Encrypt with ephemeral P-256 ECDH/HKDF → COSE_MB wrapper → unpadded base64url → three text fragments. Reverse processing recovers the payload data, timestamp, and message ID only after GCM authentication and sender-signature verification.
 
-## Reading the notation
+> **TEST ONLY.** All static and ephemeral private keys and derived secrets below are deliberately public test material. Never use them for real accounts or confidential messages. Anyone can decrypt this example or forge signatures from this test sender.
 
-The `cbor` blocks use CBOR Extended Diagnostic Notation (CBOR-EDN): `h'...'` denotes a byte string containing hexadecimal bytes, `"..."` denotes a text string, `{...}` denotes a map, `[...]` denotes an array, and `18(...)` or `96(...)` denotes a tagged value. Comments are enclosed in `/ ... /`. A byte string containing serialized CBOR remains a byte string in its enclosing object; decoding its contents is a separate step.
+This is one concrete verified run. Its ephemeral keypair, IV, and signature were newly generated, so new runs normally produce different ciphertext, checksums, and fragment strings. The ephemeral private key was extractable only to explain this disposable trace; production ephemeral private keys must not be persisted or reused.
 
-Every hexadecimal byte string below is complete, without abbreviated bytes. Maps are displayed in the deterministic order used by the implementation. Hexadecimal dumps show the actual serialized bytes; diagnostic comments are not serialized. Base64 is standard padded base64, not base64url.
+## Reading the notation and implementation boundary
+
+CBOR-EDN uses h'...' for byte strings, "..." for text strings, {...} for maps, [...] for arrays, and numeric tags such as 1(...), 18(...), and 96(...). Comments appear between slashes and are not serialized. All displayed hex values are complete. A byte string holding CBOR must be decoded separately; it is not a nested map on the wire.
+
+The stored test keys below use standard base64. The final transport encoding uses unpadded base64url of the COSE_MB wrapper, not standard base64 of COSE_Encrypt. The payload ID 0, profile ID 2, and fragmentation ID Ex01 are three different identifiers.
+
+The current high-level functions in cose.ts and the CLI/web interface still encode and decode a standalone CBOR text string. They do not yet implement this payload-map/wrapper/fragmentation flow unchanged. This documentation example was generated and verified with the repository's CBOR codec and native WebCrypto using the profile's construction, not by claiming the older high-level round-trip accepts the new map.
 
 ## 1. Decode and validate the four supplied keys
 
@@ -82,302 +88,334 @@ pAECIAEhWCDG6rY/pJKSCGRewCOM3cTmONZG7BRi/DiWZfRedN8g7SJYIElTgaeTTXF8EWqQiX8kA1fQ
 
 The sender uses its static private scalar for signing, not for outgoing ECDH. The receiver public point is the destination for ECDH. On receipt, the receiver static private scalar performs ECDH, and the sender public point verifies the signature. Key identity/authenticity must be established outside this envelope; no `kid` is included.
 
-## 2. Encode the application text
+## 2. Encode data, timestamp, and payload ID
 
-The input is exactly the 13 UTF-8 bytes `48656c6c6f2c20776f726c6421`. There is no line feed, carriage return, byte-order mark, or terminating zero. The last byte is `21`, the exclamation mark.
-
-```cbor
-"Hello, world!" / application value: one CBOR text string /
-```
-
-CBOR encoding prefixes these bytes with `6d`: major type 3 (text), length 13. The application payload is therefore the following 14 bytes:
+The application input is exactly lowercase hello world: 11 UTF-8 bytes, no newline, BOM, or terminating zero. Its data member is a byte string, not a CBOR text string:
 
 ```cbor
-h'6d48656c6c6f2c20776f726c6421' / serialized application text, not raw UTF-8 alone /
+h'68656c6c6f20776f726c64'
 ```
 
-## 3. Construct and sign Sig_structure
-
-The protected signing header decodes as follows:
-
-```cbor
-{1: -9} / alg: ESP256, ECDSA P-256 with SHA-256 /
-```
-
-Its serialized bytes are `a10128`. Import the sender private key for ECDSA signing. Construct the deterministic Sig_structure using these protected bytes and the serialized application payload:
-
-```cbor
-[
-  "Signature1", / COSE signature context /
-  h'a10128', / body_protected: serialized header map /
-  h'', / external_aad: empty byte string, not null /
-  h'6d48656c6c6f2c20776f726c6421' / payload: serialized application text /
-]
-```
-
-This array encodes to 32 bytes:
-
-```cbor
-h'846a5369676e61747572653143a10128404e6d48656c6c6f2c20776f726c6421'
-```
-
-SHA-256 of those 32 bytes is:
-
-```cbor
-h'6ca28f277e02fe51c39e6daf0ca8ba0a08489a32f55222598e7983766ebf910f'
-```
-
-ECDSA signs the Sig_structure bytes with SHA-256; the digest above is explanatory, not a second separately hashed input. The resulting COSE signature is the raw 64-byte `r || s`, not an ASN.1 DER sequence:
-
-```cbor
-[
-  h'636f1c5be2517466d0038e9e22baa52b0894a46df5192889f1730a106bd58d6b', / r: 32-byte unsigned big-endian integer /
-  h'1a57f48adb5745f3dafa9af782ab968f9803f8c71d4a4d08a557401cd61a07c7' / s: 32-byte unsigned big-endian integer /
-] / explanatory split only; the signature field is one concatenated byte string /
-```
-
-## 4. Serialize the signed inner object
-
-```cbor
-18([ / COSE_Sign1 /
-  h'a10128', / protected: encoded alg header from step 3 /
-  {}, / unprotected: empty map /
-  h'6d48656c6c6f2c20776f726c6421', / payload: CBOR text encoded inside a byte string /
-  h'636f1c5be2517466d0038e9e22baa52b0894a46df5192889f1730a106bd58d6b1a57f48adb5745f3dafa9af782ab968f9803f8c71d4a4d08a557401cd61a07c7' / signature: r concatenated with s /
-])
-```
-
-The complete serialized COSE_Sign1 is 88 bytes. These bytes, including tag 18, are the plaintext input to AES-GCM:
-
-```cbor
-h'd28443a10128a04e6d48656c6c6f2c20776f726c64215840636f1c5be2517466d0038e9e22baa52b0894a46df5192889f1730a106bd58d6b1a57f48adb5745f3dafa9af782ab968f9803f8c71d4a4d08a557401cd61a07c7'
-```
-
-## 5. Generate an ephemeral P-256 keypair and perform ECDH
-
-The disposable ephemeral keypair for this run is shown below. The private scalar is disclosed only for this test; only the public map, with `-4` omitted, is transmitted.
+The timestamp is a fixed illustrative 2026-11-15T00:00:00Z, represented by epoch seconds 1794700800 under CBOR tag 1, matching the payload CDDL time type. Payload ID is integer 0. MIME is omitted, defaulting to text/plain; charset=UTF-8. Compression is omitted, defaulting to no compression; the data is not compressed.
 
 ```cbor
 {
-  1: 2, / kty: EC2 /
-  -1: 1, / crv: P-256 /
-  -2: h'7c930d2abc7df06fac0222bda4ee89765804555f153a24c4b4f4734b4da1327e', / ephemeral X /
-  -3: h'5c64a63625cbbdf11164f5d0c0c649b7f8d68fe192ffefdedfc18662a54480aa', / ephemeral Y /
-  -4: h'2b063abbaa4a4d88a50da9acbefcb808fc3f5f0ad5fa482673607e661b0fb433' / ephemeral d: TEST ONLY; never in the envelope /
-}
+  0: h'68656c6c6f20776f726c64', / data: 11 UTF-8 bytes, exactly lowercase hello world /
+  3: 1(1794700800), / timestamp: tag 1 epoch seconds, 2026-11-15T00:00:00Z /
+  4: 0 / payload message ID: integer zero /
+} / mime, compression, and reply_to omitted /
 ```
 
-Let `d_e` be the ephemeral private scalar, `Q_e = d_e G` its public point, and `Q_r = d_r G` the receiver public point. The sender computes `d_e Q_r`. ECDH returns the shared point's X coordinate, represented as exactly 32 big-endian bytes, including leading zeros if needed; it does not return an encoded full curve point.
+The serialized payload is 23 bytes:
 
 ```cbor
-h'e87839cff45805742c75179e9d30f1ea893542c250bee86c50029f06ac762262' / Z: shared secret; TEST ONLY /
+h'a3004b68656c6c6f20776f726c6403c11a6af8f6000400'
 ```
 
-The receiver can compute the identical result from `d_r Q_e`, since `d_e Q_r = d_r Q_e`. The sender static private scalar does not enter this calculation.
+The byte a3 introduces a three-entry map; 00 is data label 0, 4b introduces the 11 data bytes, 03 is timestamp label 3, c1 is tag 1, 1a introduces the four-byte epoch integer 6af8f600, and 04 00 encodes ID label 4 and value 0. This actual encoding follows the normative payload map; it is not the outdated bare-text payload from the prior example.
 
-## 6. Derive the AES-256 content key with HKDF
+## 3. Construct and sign Sig_structure
 
-The COSE_KDF_Context is:
+The protected signing header is:
+
+```cbor
+{1: -9} / ESP256: ECDSA P-256 with SHA-256 /
+```
+
+Its encoding is a10128. Construct deterministic Sig_structure from the original protected bytes and serialized payload map:
 
 ```cbor
 [
-  3, / AlgorithmID: the derived content algorithm A256GCM, not the recipient algorithm /
-  [null, null, null], / PartyUInfo: identity, nonce, other are absent /
-  [null, null, null], / PartyVInfo: identity, nonce, other are absent /
-  [
-    256, / SuppPubInfo keyDataLength in bits /
-    h'' / protected: recipient protected-header bytes, which are empty /
-  ]
-] / no optional SuppPubInfo other or SuppPrivInfo element /
+  "Signature1", / context /
+  h'a10128', / body_protected /
+  h'', / external_aad: empty, not null /
+  h'a3004b68656c6c6f20776f726c6403c11a6af8f6000400' / serialized payload map /
+]
 ```
 
-Its deterministic encoding, used as HKDF `info`, is 15 bytes:
+This array encodes to 41 bytes:
+
+```cbor
+h'846a5369676e61747572653143a101284057a3004b68656c6c6f20776f726c6403c11a6af8f6000400'
+```
+
+Its SHA-256 digest is:
+
+```cbor
+h'84d1fb393a5e0a28c8c583b373b4e106a175a8de9d0a4047c46af55cb237538c'
+```
+
+ECDSA signs the Sig_structure bytes with SHA-256; the digest is shown for explanation, not as a separately double-hashed input. The raw signature is 64 bytes, r followed by s, not DER:
+
+```cbor
+[
+  h'b7ac55ae1f0be6bf0e8e7f5635e847bfbb649550e26c63e60df2df198c7deaa5', / r: 32 bytes /
+  h'9241a16fdb1329f6e26b18cde4d8dc66e9585160f02f4a8a364f04008543875f' / s: 32 bytes /
+] / explanatory split only; concatenate these byte strings for the signature field /
+```
+
+## 4. Encode the signed inner object
+
+```cbor
+18([ / COSE_Sign1 /
+  h'a10128', / protected: ESP256 header bytes /
+  {}, / empty unprotected map /
+  h'a3004b68656c6c6f20776f726c6403c11a6af8f6000400', / serialized payload MAP, carried as a byte string /
+  h'b7ac55ae1f0be6bf0e8e7f5635e847bfbb649550e26c63e60df2df198c7deaa59241a16fdb1329f6e26b18cde4d8dc66e9585160f02f4a8a364f04008543875f' / 64-byte raw ECDSA r || s /
+])
+```
+
+The complete COSE_Sign1 serialization, including tag 18, is 97 bytes. This is the plaintext input to AES-GCM:
+
+```cbor
+h'd28443a10128a057a3004b68656c6c6f20776f726c6403c11a6af8f60004005840b7ac55ae1f0be6bf0e8e7f5635e847bfbb649550e26c63e60df2df198c7deaa59241a16fdb1329f6e26b18cde4d8dc66e9585160f02f4a8a364f04008543875f'
+```
+
+## 5. Generate ephemeral key material and perform ECDH
+
+The generated ephemeral keypair for this test is:
+
+```cbor
+{
+  1: 2, / EC2 /
+  -1: 1, / P-256 /
+  -2: h'7cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795', / ephemeral X /
+  -3: h'648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd', / ephemeral Y /
+  -4: h'20441e212ec7430e76f22789eddb245d3e053b305e798a4446540876a9e1c27f' / ephemeral d: TEST ONLY; never transmitted /
+}
+```
+
+The sender computes d_e Q_r using the ephemeral private scalar and receiver static public point. ECDH returns the shared point's X coordinate as exactly 32 big-endian bytes:
+
+```cbor
+h'7b90d25827d26ffae297a8810cb76ab180075d2d8146b3884844a3566601bcef'
+```
+
+The receiver computes d_r Q_e using its static private scalar and the transmitted ephemeral public point, yielding identical Z. The sender's static private scalar is used for signing only and does not enter outgoing ECDH.
+
+## 6. Derive the AES-256 content key
+
+The fixed COSE_KDF_Context is:
+
+```cbor
+[
+  3, / AlgorithmID: A256GCM, not recipient algorithm -25 /
+  [null, null, null], / PartyUInfo /
+  [null, null, null], / PartyVInfo /
+  [256, h''] / key length in bits and recipient protected-header bytes /
+] / optional other fields omitted /
+```
+
+Its 15 serialized bytes are HKDF info:
 
 ```cbor
 h'840383f6f6f683f6f6f68219010040'
 ```
 
-The profile uses HKDF-SHA-256 with `IKM = Z`, an empty salt, this `info`, and a 32-byte output. For HKDF-Extract, an absent/empty salt is equivalent to a SHA-256-length all-zero salt:
+HKDF-SHA-256 uses IKM = Z, an empty salt, this info, and 32 output bytes. For Extract the empty salt is equivalent to a 32-byte all-zero salt. PRK = HMAC-SHA-256(salt, Z):
 
 ```cbor
-h'0000000000000000000000000000000000000000000000000000000000000000' / 32-byte salt equivalent used for explaining Extract /
+h'd8c5d21ec4c2573cff3c3983824b1840d7b8fe4a8a87facd7c5c266b4d840705'
 ```
 
-`PRK = HMAC-SHA-256(salt, Z)` is:
+One Expand block suffices: T(1) = HMAC-SHA-256(PRK, info || 01). The appended 01 is a raw counter byte, not a new CBOR value. Its 16 input bytes are:
 
 ```cbor
-h'972600240708fcf04a5ffeaae6b18b1a9fe4829612a2702fff4f9bfaee60611f' / pseudorandom key: TEST ONLY /
+h'840383f6f6f683f6f6f6821901004001'
 ```
 
-Only one expansion block is needed: `T(1) = HMAC-SHA-256(PRK, T(0) || info || 0x01)`, with `T(0)` empty. The 16-byte HMAC input is:
+The entire 32-byte T(1) is the CEK:
 
 ```cbor
-h'840383f6f6f683f6f6f6821901004001' / serialized context followed by a raw counter byte; not another CBOR object /
+h'c20a5363dd8fc52743b232b72c9a4da64d0437aad85e58197e0908531528c1bd'
 ```
 
-The 32-byte `T(1)` is the entire AES-256 content-encryption key (CEK):
+Z, PRK, and CEK are local secrets, disclosed only in this example; they are not message fields. The recipient algorithm -25 uses direct key agreement, not a separately generated or wrapped content key.
+
+## 7. Construct AAD and encrypt
+
+The outer protected header is:
 
 ```cbor
-h'dcc6c455199eabacab47a86222646c2d788dc9f67de38cc891785d43e91ea092' / CEK: TEST ONLY; never transmitted /
+{1: 3} / A256GCM /
 ```
 
-The recipient algorithm is ECDH-ES+HKDF-256 (`-25`): direct key agreement. There is no separately generated or wrapped CEK and no recipient ciphertext carrying a key.
-
-## 7. Build AES-GCM additional authenticated data
-
-The outer protected header selects the content algorithm:
+Its encoded bytes are a10103. The Enc_structure is:
 
 ```cbor
-{1: 3} / alg: A256GCM /
+["Encrypt", h'a10103', h''] / context, original outer protected bytes, empty external AAD /
 ```
 
-Its encoding is `a10103`. The Enc_structure is:
-
-```cbor
-[
-  "Encrypt", / COSE encryption context /
-  h'a10103', / body_protected: original encoded outer protected header /
-  h'' / external_aad: empty /
-]
-```
-
-Its 14 serialized bytes are the AES-GCM additional authenticated data (AAD):
+Its 14 serialized bytes are GCM AAD:
 
 ```cbor
 h'8367456e637279707443a1010340'
 ```
 
-The AAD is authenticated but not encrypted. The outer unprotected map and recipient structure are not inserted into this Enc_structure; the IV and ephemeral public key also affect decryption through the GCM and key-agreement computations.
-
-## 8. Encrypt the signed object
-
-For this run, the randomly generated 12-byte IV is:
+The fresh IV is 12 bytes:
 
 ```cbor
-h'91a18b349f69946929ecf2da'
+h'5ae9883db852df45a6dddbca'
 ```
 
-AES-256-GCM uses the CEK from step 6, this IV, the AAD from step 7, the 88-byte serialized COSE_Sign1 from step 4, and a 128-bit authentication tag. The encrypted content alone is 88 bytes:
+AES-256-GCM encrypts the 97-byte signed object using this IV, CEK, AAD, and a 128-bit tag. The encrypted content alone is 97 bytes:
 
 ```cbor
-h'4d48e758912f8d03465ff6d4fdb9c28e3bc9c188ff344c70185b0f802ddfb724efc25046a8e2e2a62c81c9e9f1a1acf73c5135165521711d3d1bb9b14a83a878463b8a31286246b71dec2cc01cc3d38bdb24e2719dc0aad5'
+h'e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d2'
 ```
 
 The 16-byte authentication tag is:
 
 ```cbor
-h'8fac15a62a3d80c2ff55718ce23c7e84'
+h'3df3df631c6d4a7d3bf119039d7ae61a'
 ```
 
-COSE stores a single 104-byte ciphertext byte string: encrypted content followed immediately by this tag. There is no separate tag field in the envelope.
+The ciphertext field concatenates encrypted content and tag into one 113-byte byte string. No separate tag field is transmitted.
 
-## 9. Assemble and encode the single-recipient envelope
+## 8. Serialize profile 2: COSE_Encrypt
 
 ```cbor
 96([ / COSE_Encrypt /
-  h'a10103', / protected: serialized A256GCM header /
-  {
-    5: h'91a18b349f69946929ecf2da' / unprotected IV: 12 bytes /
-  },
-  h'4d48e758912f8d03465ff6d4fdb9c28e3bc9c188ff344c70185b0f802ddfb724efc25046a8e2e2a62c81c9e9f1a1acf73c5135165521711d3d1bb9b14a83a878463b8a31286246b71dec2cc01cc3d38bdb24e2719dc0aad58fac15a62a3d80c2ff55718ce23c7e84', / encrypted COSE_Sign1 followed by GCM tag /
-  [ / recipients: exactly one entry /
+  h'a10103', / protected: encoded {1: 3}, selecting A256GCM /
+  {5: h'5ae9883db852df45a6dddbca'}, / unprotected IV: 12 bytes /
+  h'e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a', / encrypted signed object followed by 16-byte GCM tag /
+  [ / exactly one recipient /
     [
-      h'', / recipient protected header: zero bytes, not the encoding of an empty map /
+      h'', / recipient protected header: zero bytes, not an encoded empty map /
       {
-        1: -25, / recipient alg: ECDH-ES+HKDF-256 /
-        -1: { / epk: sender ephemeral public COSE_Key; label -1 here means epk, not crv /
-          1: 2, / kty: EC2 /
-          -1: 1, / inside the key map, label -1 means crv: P-256 /
-          -2: h'7c930d2abc7df06fac0222bda4ee89765804555f153a24c4b4f4734b4da1327e', / ephemeral X /
-          -3: h'5c64a63625cbbdf11164f5d0c0c649b7f8d68fe192ffefdedfc18662a54480aa' / ephemeral Y; no d or alg /
+        1: -25, / recipient algorithm: ECDH-ES+HKDF-256 /
+        -1: { / epk: public-only ephemeral COSE_Key /
+          1: 2, / EC2 /
+          -1: 1, / P-256; -1 means crv inside this key map /
+          -2: h'7cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795', / ephemeral X /
+          -3: h'648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd' / ephemeral Y; no private scalar or alg /
         }
       },
-      h'' / recipient ciphertext: empty for direct key agreement /
+      h'' / no wrapped key: direct agreement has empty recipient ciphertext /
     ]
   ]
 ])
 ```
 
-The complete envelope is 212 bytes. Its hexadecimal serialization is:
+The complete profile object is 221 bytes:
 
 ```cbor
-h'd8608443a10103a1054c91a18b349f69946929ecf2da58684d48e758912f8d03465ff6d4fdb9c28e3bc9c188ff344c70185b0f802ddfb724efc25046a8e2e2a62c81c9e9f1a1acf73c5135165521711d3d1bb9b14a83a878463b8a31286246b71dec2cc01cc3d38bdb24e2719dc0aad58fac15a62a3d80c2ff55718ce23c7e84818340a201381820a4010220012158207c930d2abc7df06fac0222bda4ee89765804555f153a24c4b4f4734b4da1327e2258205c64a63625cbbdf11164f5d0c0c649b7f8d68fe192ffefdedfc18662a54480aa40'
+h'd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795225820648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd40'
 ```
 
-Here `d8 60` introduces tag 96, `84` the four-element envelope, `43` its three-byte protected header, `4c` the 12-byte IV, and `58 68` the 104-byte ciphertext. Later, `81 83` introduces one recipient containing three elements; `38 18` encodes `-25`. The final `40` encodes the empty recipient ciphertext byte string.
+The prefix d8 60 is tag 96, 84 introduces the four-element object, and 58 71 introduces the 113-byte ciphertext. The recipient structure carries only the public ephemeral key. Neither static public key, private scalar, CEK, nor conversation metadata is repeated in the outer headers. Conversation timestamp and ID are inside the signed and encrypted payload map.
 
-Standard base64 of those same 212 bytes is:
+## 9. Wrap the profile object in COSE_MB
+
+Profile ID 2 belongs to the outer map, not a COSE header:
+
+```cbor
+{
+  0: h'd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795225820648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd40', / p_object: serialized COSE_Encrypt as one byte string /
+  1: 2 / p_id: single-recipient encrypted message profile /
+}
+```
+
+The wrapper is 227 bytes:
+
+```cbor
+h'a20058ddd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795225820648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd400102'
+```
+
+The prefix a2 00 58 dd introduces a two-entry map, label 0, and a 221-byte byte string. Its content begins with the profile's d8 60 tag. The final 01 02 is profile label 1 and profile ID 2. The wrapper is outside COSE cryptographic authentication; dispatchers must validate the selected profile rather than treating wrapper fields as signed payload metadata.
+
+## 10. Encode the wrapper and calculate its checksum
+
+Encode all 227 wrapper bytes once using base64url, replacing + with - and / with _, and omitting trailing =. The resulting body is 303 ASCII characters:
 
 ```text
-2GCEQ6EBA6EFTJGhizSfaZRpKezy2lhoTUjnWJEvjQNGX/bU/bnCjjvJwYj/NExwGFsPgC3ftyTvwlBGqOLipiyByenxoaz3PFE1FlUhcR09G7mxSoOoeEY7ijEoYka3HewswBzD04vbJOJxncCq1Y+sFaYqPYDC/1VxjOI8foSBg0CiATgYIKQBAiABIVggfJMNKrx98G+sAiK9pO6JdlgEVV8VOiTEtPRzS02hMn4iWCBcZKY2Jcu98RFk9dDAxkm3+NaP4ZL/797fwYZipUSAqkA=
+ogBY3dhghEOhAQOhBUxa6Yg9uFLfRabd28pYceFLHHxPoNtEDzGtO4GotKMcglQrwLs7eCk0HNLnvdRnkUOdXj5mVKEKtJ7lvl8XxmJpOurOHh4ok8q98kkEhhOtbTafJOwD8Mhedm_3MlJPqVwMdiT79HzXN8GJcf-yN9I9899jHG1KfTvxGQOdeuYagYNAogE4GCCkAQIgASFYIHzZQ-KKZTyVx_n4oCxZkMaS2bbb4-I1tQnG1t1fhKeVIlggZIo7iqey-ZTBhqj1JNc0oTcFq0Z5mB_hoBIdFAG0Fb1AAQI
 ```
 
-This is the CBOR object that the CLI saves and the web page emits as base64. No future application-level message-profile wrapper is included.
+CRC-32/ISO-HDLC of the complete decoded COSE_MB bytes is 02E0CA14. It is not a checksum of COSE_Encrypt alone or of the text headers. The eight-digit uppercase value includes its leading zero. This uses the polynomial, initial value, reflection, and final XOR defined in Encoded Message to Text; the algorithm check value for ASCII 123456789 is CBF43926. CRC catches accidental corruption, not malicious modification or identity forgery.
 
-## 10. Receiver: decode the outer layers and validate them
+## 11. Fragment at a maximum of 140 characters
 
-Base64-decode the value from step 9 to exactly 212 bytes, then CBOR-decode it to the tag-96 object shown there. Require the four-element envelope, exactly one three-element recipient entry, a 12-byte IV, and a ciphertext containing encrypted content plus the 16-byte tag. Decode protected byte string `h'a10103'` separately to `{1: 3}` and require A256GCM.
+Every fragment includes P and the same I=Ex01. E is omitted, selecting default encoding 0. Only fragment 1 includes S=Hello to you and C=02E0CA14. The payload ID 0 is unrelated to the fragment grouping ID Ex01.
 
-The recipient protected byte string `h''` means no protected recipient headers; it is not itself a serialized CBOR map. Require the unprotected recipient algorithm `-25`, an empty recipient ciphertext, and a valid public-only ephemeral P-256 COSE_Key. Reject duplicate map labels, overlapping protected/unprotected header labels, unsupported critical headers, unsupported algorithms, malformed structures, and trailing CBOR data. Validate the selected receiver private key and sender public key as in step 1.
+Header 1 is 43 characters, leaving 97 body characters. Headers 2 and 3 are 17 characters, each allowing up to 123 body characters. All overall headers are below 50 characters; all individual fields are at most 20 characters, including key and equals sign but excluding semicolons. The subject field S=Hello to you is 14 characters.
 
-Preserve the original protected-header bytes for cryptographic computations, rather than decoding and re-encoding them. For this envelope they are exactly `a10103` outside and, later, `a10128` inside.
+| Part | Header characters | Body characters | Complete fragment characters |
+| ---- | ----------------: | --------------: | ---------------------------: |
+| 1    |                43 |              97 |                          140 |
+| 2    |                17 |             123 |                          140 |
+| 3    |                17 |              83 |                          100 |
 
-## 11. Receiver: repeat ECDH and HKDF
+Each following block is one complete fragment, wrapped at 80 characters for display only. Headers remain on the first line; remove the display newlines from the body to recover the original fragment. These newlines do not count toward the fragment lengths above:
 
-Import the receiver private key for ECDH and the transmitted ephemeral public key for agreement. Compute `d_r Q_e`, yielding exactly the 32-byte `Z` from step 5:
+```text
+C1;P=1/3;I=Ex01;S=Hello to you;C=02E0CA14;;ogBY3dhghEOhAQOhBUxa6Yg9uFLfRabd28pYc
+eFLHHxPoNtEDzGtO4GotKMcglQrwLs7eCk0HNLnvdRnkUOdXj5mVKEKtJ7lv
+```
+
+```text
+C1;P=2/3;I=Ex01;;l8XxmJpOurOHh4ok8q98kkEhhOtbTafJOwD8Mhedm_3MlJPqVwMdiT79HzXN8GJ
+cf-yN9I9899jHG1KfTvxGQOdeuYagYNAogE4GCCkAQIgASFYIHzZQ-KKZTyV
+```
+
+```text
+C1;P=3/3;I=Ex01;;x_n4oCxZkMaS2bbb4-I1tQnG1t1fhKeVIlggZIo7iqey-ZTBhqj1JNc0oTcFq0Z
+5mB_hoBIdFAG0Fb1AAQI
+```
+
+The split occurs after body character 97 and then after another 123 characters. Neither boundary must align to a four-character base64 unit. Do not independently base64-decode individual fragment bodies. Newlines can separate copied fragments; receivers remove CR/LF from bodies before validation.
+
+## 12. Reassemble, verify CRC, and decode the wrapper
+
+Parse each header beginning with C1; and ending at the first ;;. Collect fragments by I=Ex01, require consistent total 3 and effective encoding 0, and require parts 1, 2, and 3 exactly once. Order by P rather than arrival order. Retain the first fragment's subject as display metadata, not authenticated conversation data.
+
+Strip CR/LF from bodies, concatenate them in part order to the exact 303-character string in step 10, and reject invalid alphabet, impossible length, or nonzero unused trailing bits. If a decoder requires standard padding, internally append one = to this joined string; no padding is transmitted. Decode to exactly the 227 wrapper bytes from step 9.
+
+Calculate CRC-32/ISO-HDLC over those bytes and compare with 02E0CA14 from fragment 1; reject a mismatch. CBOR-decode one complete map with no duplicate labels or trailing data. Require profile ID 2 and p_object to be a byte string; extract its 221 bytes and decode them separately to the tag-96 structure in step 8.
+
+## 13. Decrypt profile 2, verify the signature, and recover the payload
+
+Validate the envelope and selected static keys: tag 96, four elements, A256GCM protected algorithm, 12-byte IV, one three-element recipient, -25 agreement algorithm, empty recipient protected and ciphertext fields, and a valid public-only P-256 ephemeral key. Reject duplicate labels, overlapping protected/unprotected labels, unsupported critical parameters, malformed structures, or trailing CBOR data. Preserve original protected bytes rather than re-encoding them for signature or AAD calculations.
+
+Receiver ECDH d_r Q_e reproduces Z from step 5. The KDF context and empty salt reproduce PRK and CEK from step 6. Construct AAD from the received a10103 bytes as in step 7; AES-GCM authenticates the ciphertext and tag before returning the exact 97-byte COSE_Sign1 from step 4.
+
+Decode the recovered tag-18 object, require ESP256 and a 64-byte signature, and reconstruct the 41-byte Sig_structure using the original a10128 bytes and the received 23-byte payload byte string. Verify the raw r || s signature with the sender public key and SHA-256. GCM success alone does not identify the sender: anyone with the receiver public key can create an encrypted message to it.
+
+Only after both authentications succeed, decode the payload bytes to the following map:
 
 ```cbor
-h'e87839cff45805742c75179e9d30f1ea893542c250bee86c50029f06ac762262'
+{
+  0: h'68656c6c6f20776f726c64', / data: 11 UTF-8 bytes, exactly lowercase hello world /
+  3: 1(1794700800), / timestamp: tag 1 epoch seconds, 2026-11-15T00:00:00Z /
+  4: 0 / payload message ID: integer zero /
+} / mime, compression, and reply_to omitted /
 ```
 
-Rebuild the COSE_KDF_Context shown in step 6 from the required profile values and empty recipient protected bytes. Using the same empty salt and `info` reproduces the same PRK and CEK:
+Validate data as a byte string, timestamp as tag-1 epoch time, and ID as an integer. Since compression is absent, do not decompress. Since MIME is absent, interpret the bytes as text/plain; charset=UTF-8, validating UTF-8:
 
 ```cbor
-[
-  h'972600240708fcf04a5ffeaae6b18b1a9fe4829612a2702fff4f9bfaee60611f', / reproduced PRK /
-  h'dcc6c455199eabacab47a86222646c2d788dc9f67de38cc891785d43e91ea092' / reproduced AES-256 CEK /
-] / explanatory display only; neither secret is a received CBOR field /
+"hello world" / decoded application text; not the serialized payload object /
 ```
 
-The receiver needs neither the sender static private key nor the ephemeral private scalar.
+The exact returned data bytes are 68656c6c6f20776f726c64, length 11, without a trailing newline. The recovered timestamp is 2026-11-15T00:00:00Z and the recovered payload ID is 0. The optional text subject Hello to you is outside the encrypted payload and is not authenticated by the inner signature.
 
-## 12. Receiver: authenticate GCM before processing the inner object
+## Size accounting for this updated example
 
-Rebuild the Enc_structure from step 7 using the received protected bytes, obtaining AAD `8367456e637279707443a1010340`. AES-GCM decrypts using the CEK, received IV, and complete 104-byte ciphertext/tag. Authentication must succeed before the 88 recovered bytes are processed as a signed object. A changed ciphertext, tag, IV, or derived key causes failure; do not release plaintext on failure.
+| Stage                        | Bytes or characters | Accounting                                                                     |
+| ---------------------------- | ------------------: | ------------------------------------------------------------------------------ |
+| UTF-8 data                   |            11 bytes | Lowercase hello world                                                          |
+| Payload map                  |            23 bytes | 11 data + 12 map/data framing and timestamp/ID encoding                        |
+| COSE_Sign1                   |            97 bytes | 23 payload + 64 signature + 10 framing                                         |
+| GCM ciphertext including tag |           113 bytes | 97 encrypted bytes + 16 tag                                                    |
+| Profile-2 COSE_Encrypt       |           221 bytes | 113 ciphertext + 12 IV + 64 ephemeral coordinates + 32 outer/recipient framing |
+| COSE_MB                      |           227 bytes | 221 profile bytes + 6 wrapper framing/ID bytes                                 |
+| Unpadded base64url body      |      303 characters | Encoded wrapper, not encoded profile alone                                     |
+| Three complete fragments     |      380 characters | 303 body + 77 total header characters                                          |
 
-Successful GCM decryption yields exactly the 88-byte COSE_Sign1 serialization in step 4. CBOR-decoding those bytes produces:
-
-```cbor
-18([
-  h'a10128', / original signing protected-header bytes /
-  {}, / unprotected header /
-  h'6d48656c6c6f2c20776f726c6421', / application payload bytes: still not released /
-  h'636f1c5be2517466d0038e9e22baa52b0894a46df5192889f1730a106bd58d6b1a57f48adb5745f3dafa9af782ab968f9803f8c71d4a4d08a557401cd61a07c7'
-])
-```
-
-GCM success alone is not sufficient sender authentication: anyone with the receiver public key can create an encrypted envelope for that receiver. The inner sender signature must also verify.
-
-## 13. Receiver: verify the signature, then decode the application text
-
-Require tag 18 with four elements, decode signing protected bytes `a10128` to `{1: -9}`, enforce ESP256, and require a 64-byte signature. Reconstruct the exact Sig_structure in step 3 using the received signing protected bytes, empty external AAD, and received payload byte string. It encodes to the same 32 bytes and hashes to the same SHA-256 digest.
-
-Import the selected sender public key for ECDSA verification and verify the raw `r || s` against that Sig_structure with SHA-256. This signature verifies. Only after verification succeeds, CBOR-decode the 14 payload bytes:
-
-```cbor
-h'6d48656c6c6f2c20776f726c6421' / input to the final CBOR decoder /
-```
-
-The first byte `6d` specifies a 13-byte text string. Require a text value, valid UTF-8, and no trailing CBOR data. The decoded value is:
-
-```cbor
-"Hello, world!"
-```
-
-The exact returned UTF-8 bytes are `48656c6c6f2c20776f726c6421`, ending in `21` (`!`) with no trailing newline. A Markdown code block's display newline is not part of this value.
+These counts omit line separators between pasted fragments. Changing timestamp, payload length, optional fields, or number of parts may change CBOR length headers and transport overhead.
 
 ## Verification and security boundary
 
-The supplied private keys were validated against their coordinates, their exported public keys matched the supplied public encodings, and the inner signature verified using `verifyMessage`. Sender-side and receiver-side ECDH results matched. Explicit HKDF Extract/Expand calculations matched native WebCrypto HKDF output. AES-GCM recovered the exact serialized inner object, and the full envelope passed the prototype's `decryptMessage`, returning exactly `Hello, world!`.
+The retained static keypairs were validated and their public exports matched the supplied public keys. All serialized intermediate values were computed for this payload map. Sender and receiver ECDH matched; explicit HKDF Extract/Expand matched native HKDF; the profile signature and GCM ciphertext verified. The published fragments reassembled to the exact wrapper, validated CRC, dispatched profile 2, and recovered exactly the 11 data bytes, tag-1 timestamp 1794700800, and ID 0.
 
-These checks establish the example's byte-level round-trip, not account identity, replay protection, or forward secrecy against compromise of the receiver's static private key. Those boundaries remain as described in the profile document. The exposed test secrets intentionally remove confidentiality and sender authenticity from this published example.
+This demonstrates byte-level encoding and authenticated payload recovery, not authenticated key discovery, replay prevention, or forward secrecy against receiver static-key compromise. Header subject, fragment ID, CRC, and outer wrapper are not substitutes for COSE signature/GCM verification. Publishing the test secrets intentionally removes confidentiality and sender authenticity from this example.
