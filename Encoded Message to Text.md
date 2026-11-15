@@ -1,6 +1,6 @@
 # Encoded Message to Text
 
-Document version ID: 20261115
+Document version ID: 20261115-2
 
 This defined a process to encode a `COSE_MB` object into plain text, and possibly break it into fragments.
 
@@ -42,9 +42,11 @@ Supported headers (all optional unless otherwise mentioned):
 
 - `P`
     - "Part"
-    - Value is `^(?<N>[1-9]+[0-9]*)/(?<Total>[1-9]+[0-9]*)$`
+    - Value is `^(?<N>[0-9]+)(?<TotalPart>/(?<Total>[0-9]+))?$`
     - `N` is always <= `Total`.
-    - Used for multi-fragment messages. Signifies that that this is fragment is the `N`th fragment of a total of `Total`.
+    - Used for multi-fragment messages.
+    - Signifies that that this is fragment is the `N`th fragment of a total of `Total`.
+    - `TotalPart` (for example, in `P=1/5`, the `/5`) is optional for parts `N` > 1.
     - If not specified, `P=1/1` is assumed.
 - `E`
     - "Encoding"
