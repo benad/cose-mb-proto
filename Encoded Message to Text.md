@@ -16,14 +16,14 @@ When copy-pasting multiple messages at once, you can safely use newlines to sepa
 C1;((?<header>.*?);)*;
 ```
 
-The maximum size of the overall header is 50 characters.
+The header can only contain ASCII characters. The maximum size of the overall header is 50 characters, including everything from the leading `C1;` to the trailing `;;`. Parsing should expect the message to start with `C1;` and the header to end with the first use of the sequence `;;`.
 
 Examples:
 
 - `C1;;`
     - Canonically the same as: `C1;P=1/1;E=0;;`
-- `C1;P=1/3;S=My message to account 123;;`
-- `C1;P=1/2;Hello world!;;`
+- `C1;P=1/3;I=Ex01;S=msg1.txt;;`
+- `C1;P=1/2;I=Ex01;Hello world!;;`
 
 Each header can either be:
 
@@ -32,7 +32,7 @@ Each header can either be:
 
 Header keys are case-sensitive.
 
-The maximum size of each header is 20 characters.
+The maximum size of each header is 20 characters. This includes the `key` field and its following `=` character, if any, but does not include the delimiting `;` character.
 
 If more than one header has the same key, only its first value is considered.
 
@@ -49,20 +49,52 @@ Supported headers (all optional unless otherwise mentioned):
 - `E`
     - "Encoding"
     - Value is one of the following:
-        - `0`: base64url
+        - `0`: `base64url`, but use `-` and `_` instead of `+` and `/`. Omit trailing `=`.
         - `1`: **Reserved, not yet implemented** Z85 (possibly with custom alphabet)
         - `2`: **Reserved, not yet implemented** [Base2048](https://github.com/qntm/base2048)
-    - If not specified, `0`, meaning base64url, is assumed.
+    - If not specified, `0`, meaning `base64url`, is assumed.
 - `I`
     - "ID"
-    - Value is: `^(a-zA-Z0-9){4,8}$`
+    - Value is: `^[a-zA-Z0-9]{4,8}$`
     - This is used to track multi-fragment messages. Each fragment must have the same ID value.
-    - **Required** for multi-fragment messages, meaning when `P` is not specified or if the value of `P` is not `1/1`.
+    - Required when `P` specified a `Total` value > 1.
 - `S`
     - "Subject"
     - Value is `^([^;\n\r])+$`
     - Users are strongly recommended to place lengthier description in a separate message.
+    - Recommeded only on the first fragment.
 - `C`
     - "CRC32"
-    - Value is `^[0-9A-F]{6}$`
-    - This is the CRC32 checksum of the CBOR message, in uppercase hexadecimal.
+    - Value is `^[0-9A-F]{8}$`
+    - See below for more information.
+    - Recommended only to be specified in the first fragment. The values specified in subsequent fragments are ignored.
+    - If the checksum doesn't match the decoded message, reject the message.
+
+## Reassembly of Fragments
+
+- Concatenate the body (meaning, whatever follows the header) of each fragment.
+- Do so ordered by part number.
+- Require all parts to be specified exactly once.
+- Require consistent total/encoding.
+
+## `base64url` Encoding
+
+- Use `-` and `_` instead of `+` and `/`.
+- Omit trailing `=`.
+- Senders omit `\n` and `\r`; receivers remove `\n` and `\r` from fragment bodies before validation.
+- Encode the entire CBOR message first, then split the resulting text into fragments. On receipt, concatenate the fragment bodies before decoding; restore padding internally if the decoder requires it.
+- Individual fragments need not align to four-character boundaries.
+- Reject invalid characters, impossible lengths, and nonzero unused trailing bits.
+
+# CRC32 Header
+
+This is the CRC-32/ISO-HDLC checksum of the decoded CBOR binary message, in uppercase hexadecimal. It is only used to detect trivial encoding or fragmentation errors.
+
+See [RFC 1952, Section 8](https://www.rfc-editor.org/rfc/rfc1952.html#section-8).
+
+- Polynomial `0x04C11DB7` (reflected implementation: `0xEDB88320`)
+- Initial register `0xFFFFFFFF`
+- Reflected input/output
+- Final XOR `0xFFFFFFFF`.
+- The check value for ASCII `123456789` is `CBF43926`.
+- Format the resulting integer as eight uppercase hexadecimal digits. (Do not adopt gzip’s little-endian trailer byte order for the textual header.)
