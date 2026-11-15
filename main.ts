@@ -41,6 +41,7 @@ const commands = {
       "reply-to-epoch",
       "reply-to-id",
       "fragment-size",
+      "compression",
     ],
   },
   decrypt: {
@@ -55,6 +56,7 @@ const help = `Usage:
     Public exports in profile1 mode also accept --subject TEXT, --crc32, --fragment-size CHARACTERS.
   encrypt --sender-private PATH --recipient-public PATH (--in TEXT_FILE | --text MESSAGE) --out FRAGMENTS_FILE
     [--subject TEXT] [--crc32] [--reply-to-epoch SECONDS --reply-to-id INTEGER] [--fragment-size CHARACTERS]
+    [--compression off|deflate|auto]
   decrypt --recipient-private PATH --sender-public PATH --in FRAGMENTS_FILE [--out TEXT_FILE] [--json]
 
 Use --help for help. Existing output files are never overwritten.
@@ -64,6 +66,8 @@ Private generation produces raw COSE_Key CBOR; private inputs may also be JWK JS
 Encryption emits profile-2 base64url text fragments, one per line.
 Fragment size includes headers; default 0 emits one unlimited fragment.
 Messages carry current epoch seconds and integer ID 0.
+Compression defaults to auto: use zlib-wrapped Deflate only if its data bytes are smaller.
+Compressed messages are limited to 10 MiB (10,485,760 bytes) of decompressed UTF-8 data.
 Decryption displays verified time, ID and text, or named payload fields with --json.
 Legacy bare COSE ciphertext is not accepted.
 `;
@@ -218,8 +222,16 @@ export async function main(args: string[] = Deno.args): Promise<void> {
       if (options.has("reply-to-epoch") !== options.has("reply-to-id")) {
         throw new Error("Specify both --reply-to-epoch and --reply-to-id");
       }
+      const compression = options.get("compression") ?? "auto";
+      if (
+        compression !== "off" && compression !== "deflate" &&
+        compression !== "auto"
+      ) {
+        throw new Error("--compression must be off, deflate or auto");
+      }
       const encoding: MessageOptions = {
         ...encodingOptions(),
+        compression,
         ...(options.has("reply-to-epoch")
           ? {
             replyTo: {

@@ -18,7 +18,7 @@ export interface ReplyTo {
 export interface PlaintextPayload {
   data: string;
   mime?: "text/plain; charset=UTF-8";
-  compression?: 0;
+  compression?: 0 | 1;
   timestamp?: number;
   id?: number;
   reply_to?: ReplyTo;
@@ -32,7 +32,12 @@ export interface EncodingOptions {
 
 export interface MessageOptions extends EncodingOptions {
   replyTo?: ReplyTo;
+  compression?: CompressionMode;
 }
+
+export type CompressionMode = "off" | "deflate" | "auto";
+
+export const maxDecompressedBytes = 10 * 1024 * 1024;
 
 const empty = new Uint8Array();
 const defaultMime = "text/plain; charset=UTF-8";
@@ -70,27 +75,120 @@ function number(value: unknown, name: string): number {
   return integer(value, name);
 }
 
+function byteStream(
+  bytes: Uint8Array,
+  chunkSize = 64 * 1024,
+): ReadableStream<BufferSource> {
+  let offset = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (offset === bytes.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(offset + chunkSize, bytes.length);
+      controller.enqueue(bytes.slice(offset, end));
+      offset = end;
+    },
+  });
+}
+
+async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(
+    await new Response(
+      byteStream(bytes).pipeThrough(new CompressionStream("deflate")),
+    ).arrayBuffer(),
+  );
+}
+
+async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
+  if (
+    bytes.length < 8 || (bytes[0] & 15) !== 8 || (bytes[0] >>> 4) > 7 ||
+    ((bytes[0] << 8) | bytes[1]) % 31 !== 0 || (bytes[1] & 32) !== 0
+  ) {
+    throw new Error("Invalid or unsupported zlib header");
+  }
+  // Bound each expansion burst before the native decoder yields control.
+  const reader = byteStream(bytes, 1024).pipeThrough(
+    new DecompressionStream("deflate"),
+  ).getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  let adlerA = 1, adlerB = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      length += value.length;
+      if (length > maxDecompressedBytes) {
+        await reader.cancel();
+        throw new Error("Decompressed message exceeds the 10 MiB limit");
+      }
+      for (const byte of value) {
+        adlerA = (adlerA + byte) % 65521;
+        adlerB = (adlerB + adlerA) % 65521;
+      }
+      chunks.push(value);
+    }
+    // Some native decoders accept a truncated trailer; require the RFC 1950 checksum.
+    const checksum = new DataView(
+      bytes.buffer,
+      bytes.byteOffset + bytes.length - 4,
+      4,
+    ).getUint32(0);
+    if (((adlerB << 16) | adlerA) >>> 0 !== checksum) {
+      throw new Error("Invalid zlib Adler-32 checksum");
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const result = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
+}
+
 export async function encodePayload(
   payload: PlaintextPayload,
+  compression: CompressionMode = payload.compression === 1 ? "deflate" : "off",
 ): Promise<Uint8Array> {
   // Reject lone surrogates instead of silently replacing input during UTF-8 encoding.
   const data = new TextEncoder().encode(payload.data);
   if (decoder.decode(data) !== payload.data) {
     throw new Error("Message contains invalid Unicode text");
   }
-  const result = new Map<number, unknown>([[0, data]]);
+  if (!["off", "deflate", "auto"].includes(compression)) {
+    throw new Error("Compression must be off, deflate or auto");
+  }
+  if (
+    payload.compression !== undefined &&
+    payload.compression !== 0 && payload.compression !== 1
+  ) {
+    throw new Error("Unsupported payload compression");
+  }
+  if (compression === "deflate" && data.length > maxDecompressedBytes) {
+    throw new Error("Compressed messages must not exceed 10 MiB of UTF-8 data");
+  }
+  const compressed = compression === "off" ? undefined : await deflate(data);
+  const useDeflate = compressed !== undefined &&
+    (compression === "deflate" || compressed.length < data.length);
+  if (useDeflate && data.length > maxDecompressedBytes) {
+    throw new Error("Compressed messages must not exceed 10 MiB of UTF-8 data");
+  }
+  const result = new Map<number, unknown>([
+    [0, useDeflate ? compressed : data],
+  ]);
   if (payload.mime !== undefined) {
     if (payload.mime !== defaultMime) {
       throw new Error("Only default plain-text UTF-8 MIME is supported");
     }
     result.set(1, payload.mime);
   }
-  if (payload.compression !== undefined) {
-    if (payload.compression !== 0) {
-      throw new Error("Compressed payloads are not supported");
-    }
-    result.set(2, 0);
-  }
+  if (useDeflate) result.set(2, 1);
+  else if (payload.compression === 0) result.set(2, 0);
   if (payload.timestamp !== undefined) {
     result.set(3, new Tag(1, epoch(payload.timestamp)));
   }
@@ -106,7 +204,9 @@ export async function encodePayload(
   return await encodeCbor(result);
 }
 
-export function decodePayload(encoded: Uint8Array): PlaintextPayload {
+export async function decodePayload(
+  encoded: Uint8Array,
+): Promise<PlaintextPayload> {
   const value = decodeCbor(encoded);
   if (!(value instanceof Map)) throw new Error("Payload must be a CBOR map");
   const data = value.get(0);
@@ -116,17 +216,18 @@ export function decodePayload(encoded: Uint8Array): PlaintextPayload {
   if (value.has(1) && value.get(1) !== defaultMime) {
     throw new Error("Only default plain-text UTF-8 MIME is supported");
   }
-  if (value.has(2) && value.get(2) !== 0) {
-    throw new Error("Compressed payloads are not supported");
+  const compression = value.get(2);
+  if (value.has(2) && compression !== 0 && compression !== 1) {
+    throw new Error("Unsupported payload compression");
   }
   for (const key of value.keys()) {
     if (!Number.isSafeInteger(key) || key < 0 || key > 5) {
       throw new Error("Unsupported payload field");
     }
   }
-  const result: PlaintextPayload = { data: decoder.decode(data) };
+  const result: PlaintextPayload = { data: "" };
   if (value.has(1)) result.mime = defaultMime;
-  if (value.has(2)) result.compression = 0;
+  if (compression === 0 || compression === 1) result.compression = compression;
   if (value.has(3)) result.timestamp = time(value.get(3));
   if (value.has(4)) result.id = number(value.get(4), "Message ID");
   if (value.has(5)) {
@@ -139,6 +240,7 @@ export function decodePayload(encoded: Uint8Array): PlaintextPayload {
       id: number(reply[1], "Reply ID"),
     };
   }
+  result.data = decoder.decode(compression === 1 ? await inflate(data) : data);
   return result;
 }
 
@@ -379,7 +481,7 @@ export async function encryptTextMessage(
     timestamp: Math.floor(Date.now() / 1000),
     id: 0,
     ...(options.replyTo !== undefined ? { reply_to: options.replyTo } : {}),
-  });
+  }, options.compression ?? "auto");
   const encrypted = await encryptPayloadBytes(
     payload,
     senderPrivate,
@@ -393,7 +495,7 @@ export async function decryptTextMessage(
   recipientPrivate: Uint8Array,
   senderPublic: Uint8Array,
 ): Promise<PlaintextPayload> {
-  return decodePayload(
+  return await decodePayload(
     await decryptPayloadBytes(
       decodeProfile(fragments, 2),
       recipientPrivate,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { Tag } from "cbor2";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { deflateRawSync, deflateSync, gzipSync, inflateSync } from "node:zlib";
 import {
   decodeCbor,
   encodeCbor,
@@ -22,6 +23,7 @@ import {
   exportPublicKeyMessage,
   formatPayload,
   fromBase64Url,
+  maxDecompressedBytes,
   normalizePublicKey,
   toBase64Url,
 } from "./message.ts";
@@ -34,9 +36,12 @@ Deno.test("payload maps preserve UTF-8 text and authenticated optional metadata"
       id: 0,
       reply_to: { timestamp: 1, id: 2 },
     };
-    assert.deepEqual(decodePayload(await encodePayload(payload)), payload);
+    assert.deepEqual(
+      await decodePayload(await encodePayload(payload)),
+      payload,
+    );
   }
-  assert.deepEqual(decodePayload(await encodePayload({ data: "a" })), {
+  assert.deepEqual(await decodePayload(await encodePayload({ data: "a" })), {
     data: "a",
   });
   assert.match(
@@ -72,10 +77,10 @@ Deno.test("payload maps preserve UTF-8 text and authenticated optional metadata"
     ] as [number, unknown][][]
   ) {
     const encoded = await encodeCbor(new Map(fields));
-    assert.throws(() => decodePayload(encoded));
+    await assert.rejects(() => decodePayload(encoded));
   }
   assert.deepEqual(
-    decodePayload(
+    await decodePayload(
       await encodeCbor(
         new Map<number, unknown>([
           [0, new Uint8Array()],
@@ -85,6 +90,102 @@ Deno.test("payload maps preserve UTF-8 text and authenticated optional metadata"
       ),
     ),
     { data: "", mime: "text/plain; charset=UTF-8", compression: 0 },
+  );
+});
+
+Deno.test("zlib payloads interoperate and auto compares data bytes strictly", async () => {
+  const vector = Uint8Array.from(
+    "789ccb48cdc9c95728cf2fca4901001a0b045d".match(/../g)!,
+    (hex) => parseInt(hex, 16),
+  );
+  const wrapped = (data: Uint8Array) =>
+    encodeCbor(new Map<number, unknown>([[0, data], [2, 1]]));
+  assert.deepEqual(await decodePayload(await wrapped(vector)), {
+    data: "hello world",
+    compression: 1,
+  });
+  for (const data of ["", "hello world", "🌍\r\n".repeat(100)]) {
+    for (const mode of ["off", "deflate", "auto"] as const) {
+      const encoded = await encodePayload({ data, id: 0 }, mode);
+      const fields = decodeCbor(encoded);
+      assert(fields instanceof Map);
+      const bytes = fields.get(0);
+      assert(bytes instanceof Uint8Array);
+      const original = new TextEncoder().encode(data);
+      const shouldCompress = mode === "deflate" ||
+        (mode === "auto" && deflateSync(original).length < original.length);
+      assert.equal(fields.get(2), shouldCompress ? 1 : undefined);
+      assert.deepEqual(
+        shouldCompress ? new Uint8Array(inflateSync(bytes)) : bytes,
+        original,
+      );
+      assert.deepEqual(await decodePayload(encoded), {
+        data,
+        id: 0,
+        ...(shouldCompress ? { compression: 1 } : {}),
+      });
+    }
+  }
+  const tie = "a".repeat(11);
+  assert.equal(deflateSync(tie).length, tie.length);
+  const fields = decodeCbor(await encodePayload({ data: tie }, "auto"));
+  assert(fields instanceof Map);
+  assert(!fields.has(2));
+  assert.deepEqual(
+    await decodePayload(await encodePayload({ data: "hello", compression: 1 })),
+    { data: "hello", compression: 1 },
+  );
+  const corrupt = vector.slice();
+  corrupt[corrupt.length - 1] ^= 1;
+  for (
+    const invalid of [
+      new Uint8Array(),
+      vector.subarray(0, 1),
+      vector.subarray(0, -1),
+      vector.subarray(0, -4),
+      corrupt,
+      new Uint8Array([...vector, 0]),
+      new Uint8Array([...vector, ...vector]),
+      deflateRawSync("hello world"),
+      gzipSync("hello world"),
+    ]
+  ) {
+    await assert.rejects(() => wrapped(invalid).then(decodePayload));
+  }
+  await assert.rejects(
+    () => wrapped(deflateSync(new Uint8Array([255]))).then(decodePayload),
+    /encoded data|UTF-8|encoding/i,
+  );
+  for (const compression of [2, -1, "1", null]) {
+    const encoded = await encodeCbor(
+      new Map<number, unknown>([[0, vector], [2, compression]]),
+    );
+    await assert.rejects(() => decodePayload(encoded), /compression/);
+  }
+  const invalidMetadata = await encodeCbor(
+    new Map<number, unknown>([[0, corrupt], [2, 1], [4, "not an integer"]]),
+  );
+  await assert.rejects(() => decodePayload(invalidMetadata), /Message ID/);
+});
+
+Deno.test("compressed payloads enforce the inclusive 10 MiB decompressed limit", async () => {
+  const data = "a".repeat(maxDecompressedBytes);
+  const encoded = await encodePayload({ data }, "deflate");
+  assert.equal((await decodePayload(encoded)).data, data);
+  const tooLarge = data + "a";
+  const oversized = await encodeCbor(
+    new Map<number, unknown>([[0, deflateSync(tooLarge)], [2, 1]]),
+  );
+  await assert.rejects(() => decodePayload(oversized), /10 MiB/);
+  for (const mode of ["deflate", "auto"] as const) {
+    await assert.rejects(
+      () => encodePayload({ data: tooLarge }, mode),
+      /10 MiB/,
+    );
+  }
+  assert.equal(
+    (await decodePayload(await encodePayload({ data: tooLarge }, "off"))).data,
+    tooLarge,
   );
 });
 
@@ -538,6 +639,82 @@ Deno.test("CLI emits bounded lines, paired reply metadata and authenticated JSON
     const display = await run(decrypt);
     assert(display.success, display.error);
     assert.equal(display.text, formatPayload(payload));
+    for (const mode of ["off", "deflate", "auto", undefined]) {
+      const filename = `compressed-${mode}`;
+      const data = "🌍\r\n".repeat(200);
+      const result = await run([
+        "encrypt",
+        "--sender-private",
+        "sender",
+        "--recipient-public",
+        "receiver-public",
+        "--text",
+        data,
+        "--out",
+        filename,
+        ...(mode === undefined ? [] : ["--compression", mode]),
+      ]);
+      assert(result.success, result.error);
+      const recovered = await run([
+        "decrypt",
+        "--recipient-private",
+        "receiver",
+        "--sender-public",
+        "sender-public",
+        "--in",
+        filename,
+        "--json",
+      ]);
+      assert(recovered.success, recovered.error);
+      assert.equal(JSON.parse(recovered.text).data, data);
+      assert.equal(
+        JSON.parse(recovered.text).compression,
+        mode === "off" ? undefined : 1,
+      );
+    }
+    const badPayload = await encodeCbor(
+      new Map<number, unknown>([
+        [0, deflateSync("hello world").subarray(0, -1)],
+        [2, 1],
+      ]),
+    );
+    const badEnvelope = await encryptPayloadBytes(
+      badPayload,
+      sender,
+      await exportPublicCoseKey(receiver),
+    );
+    await Deno.writeTextFile(
+      join(dir, "bad-compressed"),
+      encodeFragments(
+        await encodeCbor(new Map<number, unknown>([[0, badEnvelope], [1, 2]])),
+      ).join("\n"),
+    );
+    const rejected = await run([
+      "decrypt",
+      "--recipient-private",
+      "receiver",
+      "--sender-public",
+      "sender-public",
+      "--in",
+      "bad-compressed",
+      "--out",
+      "bad-plaintext",
+    ]);
+    assert(!rejected.success);
+    assert.equal(rejected.text, "");
+    await assert.rejects(
+      () => Deno.stat(join(dir, "bad-plaintext")),
+      Deno.errors.NotFound,
+    );
+    await assert.rejects(
+      async () =>
+        decryptTextMessage(
+          await Deno.readTextFile(join(dir, "bad-compressed")),
+          receiver,
+          await exportPublicCoseKey(receiver),
+        ),
+      /signature/i,
+    );
     for (
       const options of [
         ["--reply-to-epoch", "0"],
@@ -548,6 +725,7 @@ Deno.test("CLI emits bounded lines, paired reply metadata and authenticated JSON
         ["--crc32=true"],
         ["--subject", "🌍"],
         ["--reply-to-epoch", "1", "--reply-to-id", "no"],
+        ["--compression", "gzip"],
       ]
     ) {
       const invalid = await run([...encrypt, "--out", "invalid", ...options]);

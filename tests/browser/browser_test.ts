@@ -4,11 +4,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { webcrypto } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { deflateSync } from "node:zlib";
 import { chromium, firefox, type Page, webkit } from "playwright";
 import { Tag } from "cbor2";
 import {
   decodeCbor,
   encodeCbor,
+  encryptPayloadBytes,
   fromBase64,
   keyToJwk,
   toBase64,
@@ -17,6 +19,7 @@ import {
   decodeFragments,
   encodeFragments,
   formatPayload,
+  maxDecompressedBytes,
   normalizePublicKey,
 } from "../../message.ts";
 
@@ -433,20 +436,22 @@ for (
           "Copy",
         );
         await Deno.writeTextFile(path("from-browser.cbor"), encrypted);
+        const recovered = JSON.parse(
+          await cli([
+            "decrypt",
+            "--json",
+            "--recipient-private",
+            path("bob-private.cbor"),
+            "--sender-public",
+            path("alice-public.cbor"),
+            "--in",
+            path("from-browser.cbor"),
+          ]),
+        );
+        assert.equal(recovered.data, browserText);
         assert.equal(
-          JSON.parse(
-            await cli([
-              "decrypt",
-              "--json",
-              "--recipient-private",
-              path("bob-private.cbor"),
-              "--sender-public",
-              path("alice-public.cbor"),
-              "--in",
-              path("from-browser.cbor"),
-            ]),
-          ).data,
-          browserText,
+          recovered.compression,
+          message.length > 1000 ? 1 : undefined,
         );
         await Deno.writeTextFile(path("text.txt"), message, { mode: 0o600 });
         const messagePath = path(`from-cli-${messages.indexOf(message)}.cbor`);
@@ -460,6 +465,9 @@ for (
           path("text.txt"),
           "--out",
           messagePath,
+          ...(messages.indexOf(message) === 1
+            ? ["--compression", "deflate"]
+            : []),
         ]);
         await tab(page, "decrypt");
         await page.locator("#decrypt-private").fill(
@@ -501,8 +509,27 @@ for (
       await tab(page, "decrypt");
       await page.locator("#decrypt-private").fill(bobBase64);
       await page.locator("#decrypt-sender").fill(alicePublicBase64);
+      const invalidCompressed: string[] = [];
+      for (
+        const compressed of [
+          deflateSync("hello world").subarray(0, -1),
+          deflateSync("a".repeat(maxDecompressedBytes + 1)),
+          deflateSync(new Uint8Array([255])),
+        ]
+      ) {
+        const payload = await encodeCbor(
+          new Map<number, unknown>([[0, compressed], [2, 1]]),
+        );
+        const envelope = await encryptPayloadBytes(payload, alice, bobPublic);
+        invalidCompressed.push(
+          encodeFragments(
+            await encodeCbor(new Map<number, unknown>([[0, envelope], [1, 2]])),
+          ).join("\n"),
+        );
+      }
       for (
         const invalid of [
+          ...invalidCompressed,
           "not base64!",
           encodeFragments(new Uint8Array([...decodeFragments(encrypted), 0]))
             .join("\n"),

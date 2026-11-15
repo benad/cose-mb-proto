@@ -313,6 +313,7 @@ submit("encrypt", async () => {
     publicKeyInput("encrypt-recipient"),
     {
       ...encodingOptions("encrypt"),
+      compression: "auto",
       replyTo: replyEpoch
         ? {
           timestamp: numeric("encrypt-reply-epoch"),

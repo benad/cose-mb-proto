@@ -114,7 +114,7 @@
         </select>
         <label for="encrypt-fragment-size">Maximum characters per fragment (0 means unlimited)</label>
         <input id="encrypt-fragment-size" type="number" min="0" step="1" required value="280">
-        <p>New messages include the current epoch timestamp and message ID 0. No compression is used.</p>
+        <p>New messages include the current epoch timestamp and message ID 0. Zlib-wrapped Deflate is used automatically only when its data bytes are smaller. Compressed messages are limited to 10 MiB (10,485,760 bytes) of decompressed UTF-8 data.</p>
         <button type="submit">Encrypt and sign</button>
         <p role="status" id="encrypt-status" aria-live="polite"></p>
         <h3>Encrypted message fragments: base64url COSE_MB</h3>
