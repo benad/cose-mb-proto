@@ -270,6 +270,8 @@ for (
         publicFragments.length > 1 &&
           publicFragments.every((f) => f.length <= 80),
       );
+      assert.match(publicFragments[0], /^C1;P=1\/0[2-9];I=/);
+      assert(publicFragments.slice(1).every((f) => /^C1;P=\d+;I=/.test(f)));
       assert(publicFragments[0].includes("S=Hello to you;C="));
       await page.evaluate(() =>
         Object.defineProperty(navigator, "clipboard", {
@@ -347,6 +349,8 @@ for (
         controlFragments.length > 1 &&
           controlFragments.every((f) => f.length <= 140),
       );
+      assert.match(controlFragments[0], /^C1;P=1\/0[2-9];I=/);
+      assert(controlFragments.slice(1).every((f) => /^C1;P=\d+;I=/.test(f)));
       assert(controlFragments[0].includes("S=Hello to you;C="));
       await page.evaluate(() => {
         Object.defineProperty(navigator, "clipboard", {
@@ -377,6 +381,21 @@ for (
       await page.locator("#encrypted-output button").first().click();
       await page.locator("#copy-status").filter({ hasText: "Unable to copy" })
         .waitFor();
+      await page.locator("#encrypt-subject").fill("");
+      await page.locator("#encrypt-crc32").uncheck();
+      await page.locator("#encrypt-fragment-size").fill("25");
+      await page.locator("#encrypt-message").fill(
+        Array.from(
+          crypto.getRandomValues(new Uint8Array(1000)),
+          (byte) => String.fromCharCode(33 + byte % 90),
+        ).join(""),
+      );
+      await submit(page, "encrypt", true);
+      assert.match(
+        await page.locator("#encrypt-status").textContent() ?? "",
+        /more than 99 fragments/,
+      );
+      assert.equal(await page.locator("#encrypted-output textarea").count(), 0);
       await tab(page, "decrypt");
       await page.locator("#decrypt-private").fill(bobBase64);
       await page.locator("#decrypt-sender").fill(publicFragments.join("\n"));

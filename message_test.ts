@@ -209,7 +209,7 @@ Deno.test("canonical base64url and CRC32 cover entire binary messages", () => {
 });
 
 Deno.test("fragmentation accounts for all headers, CRC and part-count digit transitions", () => {
-  for (const length of [1, 30, 300, 3000, 30000]) {
+  for (const length of [1, 30, 300, 3000]) {
     const input = Uint8Array.from({ length }, (_, n) => n % 256);
     for (const size of [0, 80, 140, 280]) {
       const fragments = encodeFragments(input, {
@@ -247,6 +247,69 @@ Deno.test("fragmentation accounts for all headers, CRC and part-count digit tran
   const single = encodeFragments(input);
   assert.equal(single.length, 1);
   assert(single[0].startsWith("C1;;"));
+});
+
+Deno.test("multipart output pads the first total and stops at 99 fragments", () => {
+  for (const [length, count] of [[38, 9], [39, 10], [373, 99]]) {
+    const bytes = Uint8Array.from({ length }, (_, n) => n % 256);
+    const fragments = encodeFragments(bytes, { fragmentSize: 25 });
+    assert.equal(fragments.length, count);
+    assert.match(
+      fragments[0],
+      new RegExp(`^C1;P=1/${String(count).padStart(2, "0")};`),
+    );
+    for (let part = 2; part <= count; part++) {
+      assert.match(fragments[part - 1], new RegExp(`^C1;P=${part};I=`));
+    }
+    assert(fragments.every((fragment) => fragment.length <= 25));
+    assert.deepEqual(decodeFragments(fragments.reverse().join("\n")), bytes);
+  }
+  assert.throws(
+    () => encodeFragments(new Uint8Array(376), { fragmentSize: 25 }),
+    /more than 99 fragments/,
+  );
+});
+
+Deno.test("fragment parser accepts omitted and padded totals in any order", () => {
+  const expected = new Uint8Array([0, 0]);
+  const first = "C1;P=01/003;I=Ex01;;A";
+  const second = "C1;P=002;I=Ex01;;A";
+  const third = "C1;P=3/03;I=Ex01;;A";
+  assert.deepEqual(
+    decodeFragments([third, second, first].join("\n")),
+    expected,
+  );
+  assert.deepEqual(
+    decodeFragments([
+      "C1;P=1/3;I=Ex01;;A",
+      "C1;P=2/3;I=Ex01;;A",
+      "C1;P=3/3;I=Ex01;;A",
+    ].join("\n")),
+    expected,
+  );
+  const bytes = new Uint8Array(100);
+  const text = toBase64Url(bytes);
+  const fragments = Array.from(
+    { length: 100 },
+    (_, i) =>
+      `C1;P=${i === 0 ? "1/100" : i + 1};I=Ex01;;${
+        i === 99 ? text.slice(i) : text[i]
+      }`,
+  );
+  assert.deepEqual(decodeFragments(fragments.reverse().join("\n")), bytes);
+
+  for (
+    const input of [
+      "C1;P=1;I=Ex01;;AA",
+      "C1;P=0/1;;AA",
+      "C1;P=1/00;;AA",
+      "C1;P=2;I=Ex01;;A",
+      [first, second, "C1;P=3/04;I=Ex01;;A"].join("\n"),
+      [first, second, "C1;P=4;I=Ex01;;A"].join("\n"),
+      [first, second, "C1;P=2;I=Ex01;;A"].join("\n"),
+      [first, second, "C1;P=3;;A"].join("\n"),
+    ]
+  ) assert.throws(() => decodeFragments(input));
 });
 
 Deno.test("fragment parser rejects missing/duplicate/conflicting parts and invalid headers", () => {
@@ -514,7 +577,10 @@ Deno.test("CLI emits bounded lines, paired reply metadata and authenticated JSON
     ]);
     assert(exported.success, exported.error);
     const profileText = await Deno.readTextFile(join(dir, "sender-profile"));
-    assert(profileText.trimEnd().split("\n").every((f) => f.length <= 80));
+    const profileFragments = profileText.trimEnd().split("\n");
+    assert(profileFragments.every((f) => f.length <= 80));
+    assert.match(profileFragments[0], /^C1;P=1\/0[2-9];I=/);
+    assert(profileFragments.slice(1).every((f) => /^C1;P=\d+;I=/.test(f)));
     assert.deepEqual(
       normalizePublicKey(new TextEncoder().encode(profileText)),
       await exportPublicCoseKey(sender),
@@ -625,7 +691,30 @@ Deno.test("CLI emits bounded lines, paired reply metadata and authenticated JSON
     const fragments = (await Deno.readTextFile(join(dir, "fragments")))
       .trimEnd().split("\n");
     assert(fragments.length > 1 && fragments.every((s) => s.length <= 140));
+    assert.match(fragments[0], /^C1;P=1\/0[2-9];I=/);
+    assert(fragments.slice(1).every((f) => /^C1;P=\d+;I=/.test(f)));
     assert(fragments[0].includes("S=Hello to you;C="));
+    const oversized = await run([
+      "encrypt",
+      "--sender-private",
+      "sender",
+      "--recipient-public",
+      "receiver-public",
+      "--text",
+      "x".repeat(1000),
+      "--compression",
+      "off",
+      "--fragment-size",
+      "25",
+      "--out",
+      "too-many-fragments",
+    ]);
+    assert(!oversized.success);
+    assert.match(oversized.error, /more than 99 fragments/);
+    await assert.rejects(
+      () => Deno.stat(join(dir, "too-many-fragments")),
+      Deno.errors.NotFound,
+    );
     await Deno.writeTextFile(
       join(dir, "fragments"),
       fragments.reverse().join("\r\n"),

@@ -308,31 +308,26 @@ export function encodeFragments(
     (b) => b.toString(16).padStart(2, "0"),
   ).join("");
   const header = (part: number, total: number) =>
-    `C1;P=${part}/${total};I=${id};${part === 1 ? fields : ""};`;
-  // Account for digit transitions without assuming a fixed-size P field.
-  let total = 2;
-  while (true) {
-    if (header(1, total).length > 50 || header(total, total).length > 50) {
+    `C1;P=${
+      part === 1 ? `1/${String(total).padStart(2, "0")}` : part
+    };I=${id};${part === 1 ? fields : ""};`;
+  let capacity = 0;
+  let total = 0;
+  for (let part = 1; part <= 99; part++) {
+    const headerLength = header(part, 99).length;
+    if (headerLength > 50) {
       throw new Error("Fragment headers exceed 50 characters");
     }
-    const digits = String(total).length;
-    if (3 + 2 * digits > 20) {
-      throw new Error("Part field exceeds 20 characters");
-    }
-    let digitSum = 0;
-    for (let start = 1, n = 1; start <= total; start *= 10, n++) {
-      digitSum += (Math.min(total, start * 10 - 1) - start + 1) * n;
-    }
-    const base = header(2, total).length - 1;
-    const smallestCapacity = size -
-      Math.max(header(1, total).length, header(total, total).length);
-    if (smallestCapacity < 1) {
+    if (size <= headerLength) {
       throw new Error("Fragment size cannot fit headers and message data");
     }
-    const capacity = total * (size - base) - digitSum - fields.length;
-    if (capacity >= text.length) break;
-    total++;
+    capacity += size - headerLength;
+    if (part >= 2 && capacity >= text.length) {
+      total = part;
+      break;
+    }
   }
+  if (!total) throw new Error("Message requires more than 99 fragments");
   const fragments: string[] = [];
   let offset = 0;
   for (let part = 1; part <= total; part++) {
@@ -356,6 +351,7 @@ export function decodeFragments(input: string): Uint8Array {
   }
   const pieces = source.split("C1;").slice(1);
   const parts = new Map<number, string>();
+  const declaredTotals: number[] = [];
   let expectedTotal: number | undefined;
   let expectedId: string | undefined;
   let firstChecksum: string | undefined;
@@ -382,15 +378,21 @@ export function decodeFragments(input: string): Uint8Array {
       if (!values.has(key)) values.set(key, field.slice(equal + 1));
     }
     const p = values.get("P") ?? "1/1";
-    const match = /^([1-9][0-9]*)\/([1-9][0-9]*)$/.exec(p);
+    const match = /^([0-9]+)(?:\/([0-9]+))?$/.exec(p);
     if (!match) throw new Error("Invalid part number");
     const part = integer(Number(match[1]), "Part number");
-    const total = integer(Number(match[2]), "Part total");
-    if (part > total) throw new Error("Part number exceeds total");
+    const total = match[2] === undefined
+      ? undefined
+      : integer(Number(match[2]), "Part total");
+    if (part < 1 || total === 0 || (part === 1 && total === undefined)) {
+      throw new Error("Invalid part number or total");
+    }
+    if (total !== undefined) {
+      if (part > total) throw new Error("Part number exceeds total");
+      declaredTotals.push(total);
+    }
     const id = values.get("I");
-    if (
-      (total > 1 && !id) || (id !== undefined && !/^[a-zA-Z0-9]{4,8}$/.test(id))
-    ) {
+    if (id !== undefined && !/^[a-zA-Z0-9]{4,8}$/.test(id)) {
       throw new Error("Invalid or missing fragment ID");
     }
     if ((values.get("E") ?? "0") !== "0") {
@@ -400,14 +402,13 @@ export function decodeFragments(input: string): Uint8Array {
     if (checksum !== undefined && !/^[0-9A-F]{8}$/.test(checksum)) {
       throw new Error("Invalid CRC32 header");
     }
-    if (part === 1) firstChecksum = checksum;
-    if (
-      expectedTotal !== undefined &&
-      (total !== expectedTotal || id !== expectedId)
-    ) {
+    if (part === 1) {
+      firstChecksum = checksum;
+      expectedTotal = total;
+    }
+    if (parts.size && id !== expectedId) {
       throw new Error("Inconsistent fragment total or ID");
     }
-    expectedTotal = total;
     expectedId = id;
     if (parts.has(part)) {
       throw new Error("Each fragment part must occur exactly once");
@@ -417,6 +418,16 @@ export function decodeFragments(input: string): Uint8Array {
       throw new Error("Invalid fragment body");
     }
     parts.set(part, body);
+  }
+  if (expectedTotal === undefined) throw new Error("Missing first fragment");
+  if (declaredTotals.some((total) => total !== expectedTotal)) {
+    throw new Error("Inconsistent fragment total or ID");
+  }
+  if (expectedTotal > 1 && expectedId === undefined) {
+    throw new Error("Invalid or missing fragment ID");
+  }
+  if (Array.from(parts.keys()).some((part) => part > expectedTotal)) {
+    throw new Error("Part number exceeds total");
   }
   if (parts.size !== expectedTotal) throw new Error("Missing fragments");
   const joined = Array.from(parts).sort(([a], [b]) => a - b).map(([, body]) =>
