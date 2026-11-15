@@ -1,8 +1,8 @@
-# Person-to-Person Encrypted Message Profile
+# Single-Recipient Encrypted Message Profile
 
-Document version ID: 20261108
+Document version ID: 20261111
 
-Profile ID: TBD
+Payload is described in [Encrypted Message Payload](Encrypted%20Message%20Payload.md)
 
 This message profile is restricted to exactly one recipient. Group messages and group key exchange are separate message profiles and are outside this profile. A future application-level CBOR wrapper will identify message profiles such as public keys, single-recipient messages, group messages, and group key exchange. This document specifies the single-recipient COSE object inside that wrapper; it does not define the wrapper's encoding.
 
@@ -298,7 +298,7 @@ where:
 payloadBytes = CBOR.encode(payloadObject)
 ```
 
-The structure of `payloadObject` is application-defined and is outside the scope of this step.
+The structure of `payloadObject` is defined in [Encrypted Message Payload](Encrypted%20Message%20Payload.md).
 
 COSE treats `payloadBytes` as an opaque byte string and does not interpret its contents.
 
@@ -1798,9 +1798,7 @@ Validation:
 * Payload MUST NOT be null.
 * Payload MUST NOT be empty.
 
-The payload itself remains opaque at this stage.
-
-Its internal structure is application-defined.
+The payload is defined in [Encrypted Message Payload](Encrypted%20Message%20Payload.md).
 
 ---
 
