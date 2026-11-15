@@ -708,6 +708,8 @@ Deno.test("CLI round-trips files and text options without clobbering outputs or 
     for (const account of ["alice", "bob"]) {
       const output = await succeeds(directory, [
         "generate",
+        "--public-format",
+        "cose",
         "--private",
         `${account}-private.cbor`,
         "--public",
@@ -721,6 +723,7 @@ Deno.test("CLI round-trips files and text options without clobbering outputs or 
     const publicKey = await Deno.readFile(join(directory, "alice-public.cbor"));
     await succeeds(directory, [
       "export-public",
+      "--public-format=cose",
       "--private=alice-private.cbor",
       "--out=exported.cbor",
     ]);

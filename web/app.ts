@@ -8,9 +8,12 @@ import {
 } from "../cose.ts";
 import {
   decryptTextMessage,
+  type EncodingOptions,
   encryptTextMessage,
+  exportPublicKeyMessage,
   formatPayload,
   integer,
+  normalizePublicKey,
 } from "../message.ts";
 
 function element(id: string): HTMLElement {
@@ -51,12 +54,35 @@ function numeric(id: string): number {
   return integer(Number(value), "Numeric value");
 }
 
+function select(id: string): HTMLSelectElement {
+  const found = element(id);
+  if (!(found instanceof HTMLSelectElement)) {
+    throw new Error(`Expected select: ${id}`);
+  }
+  return found;
+}
+
 function keyInput(id: string): Uint8Array<ArrayBuffer> {
   const value = textarea(id).value.trim();
   if (!value) throw new Error("A key is required");
   return value.startsWith("{")
     ? new TextEncoder().encode(value)
     : fromBase64(value);
+}
+
+function publicKeyInput(id: string): Uint8Array {
+  const value = textarea(id).value.trim();
+  return normalizePublicKey(
+    value.startsWith("C1;") ? new TextEncoder().encode(value) : keyInput(id),
+  );
+}
+
+function encodingOptions(command: string): EncodingOptions {
+  return {
+    subject: input(`${command}-subject`).value || undefined,
+    crc32: input(`${command}-crc32`).checked,
+    fragmentSize: numeric(`${command}-fragment-size`),
+  };
 }
 
 const outputs: Record<string, string[]> = {
@@ -92,18 +118,23 @@ function status(command: string, message: string, error = false): void {
 }
 
 function clearResult(command: string): void {
-  if (command === "encrypt") {
+  if (command === "encrypt" || command === "export") {
+    const container = element(
+      command === "encrypt" ? "encrypted-output" : "public-output",
+    );
     for (
-      const target of element("encrypted-output").querySelectorAll<HTMLElement>(
+      const target of container.querySelectorAll<HTMLElement>(
         "[id]",
       )
     ) {
       copyReady.delete(target.id);
     }
-    element("encrypted-output").replaceChildren();
-    status(command, "");
-    updateCopyButtons();
-    return;
+    container.replaceChildren();
+    if (command === "encrypt") {
+      status(command, "");
+      updateCopyButtons();
+      return;
+    }
   }
   for (const id of outputs[command]) output(id, "", false);
   status(command, "");
@@ -121,6 +152,47 @@ function controls(disabled: boolean): void {
     control.disabled = disabled;
   }
   updateCopyButtons();
+  updateExportFormat();
+}
+
+function updateExportFormat(): void {
+  const raw = select("export-format").value !== "profile1";
+  const transport = element("export-transport");
+  if (!(transport instanceof HTMLFieldSetElement)) {
+    throw new Error("Expected export transport fieldset");
+  }
+  transport.hidden = raw;
+  transport.disabled = raw || busy;
+  element("export-cose-output").hidden =
+    select("export-format").value !== "cose";
+  element("export-jwk-output").hidden = select("export-format").value !== "jwk";
+}
+
+function renderFragments(
+  containerId: string,
+  prefix: string,
+  fragments: string[],
+): void {
+  for (const [index, fragment] of fragments.entries()) {
+    const id = `${prefix}-fragment-${index + 1}`;
+    const label = document.createElement("label");
+    label.htmlFor = id;
+    label.textContent = `Fragment ${
+      index + 1
+    }/${fragments.length} (${fragment.length} characters)`;
+    const box = document.createElement("textarea");
+    box.id = id;
+    box.readOnly = true;
+    box.rows = 4;
+    box.spellcheck = false;
+    box.wrap = "soft";
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.dataset.copy = id;
+    copy.textContent = "Copy";
+    element(containerId).append(label, box, copy);
+    output(id, fragment);
+  }
 }
 
 async function confirmReplacement(): Promise<boolean> {
@@ -212,10 +284,21 @@ submit("generate", async () => {
 });
 
 submit("export", async () => {
-  const key = await exportPublicCoseKey(keyInput("export-private"));
-  const jwk = JSON.stringify(keyToJwk(key, false), null, 2);
-  output("exported-public", toBase64(key));
-  output("exported-jwk", jwk);
+  const privateKey = keyInput("export-private");
+  const format = select("export-format").value;
+  if (format === "profile1") {
+    renderFragments(
+      "public-output",
+      "public",
+      await exportPublicKeyMessage(privateKey, encodingOptions("export")),
+    );
+  } else {
+    const key = await exportPublicCoseKey(privateKey);
+    if (format === "cose") output("exported-public", toBase64(key));
+    else if (format === "jwk") {
+      output("exported-jwk", JSON.stringify(keyToJwk(key, false), null, 2));
+    } else throw new Error("Unknown public format");
+  }
 });
 
 submit("encrypt", async () => {
@@ -224,15 +307,12 @@ submit("encrypt", async () => {
   if (Boolean(replyEpoch) !== Boolean(replyId)) {
     throw new Error("Specify both reply-to epoch and ID");
   }
-  const subject = input("encrypt-subject").value;
   const encrypted = await encryptTextMessage(
     textarea("encrypt-message").value,
     keyInput("encrypt-private"),
-    keyInput("encrypt-recipient"),
+    publicKeyInput("encrypt-recipient"),
     {
-      subject: subject || undefined,
-      crc32: input("encrypt-crc32").checked,
-      fragmentSize: numeric("encrypt-fragment-size"),
+      ...encodingOptions("encrypt"),
       replyTo: replyEpoch
         ? {
           timestamp: numeric("encrypt-reply-epoch"),
@@ -241,51 +321,41 @@ submit("encrypt", async () => {
         : undefined,
     },
   );
-  for (const [index, fragment] of encrypted.entries()) {
-    const id = `encrypted-fragment-${index + 1}`;
-    const label = document.createElement("label");
-    label.htmlFor = id;
-    label.textContent = `Fragment ${
-      index + 1
-    }/${encrypted.length} (${fragment.length} characters)`;
-    const box = document.createElement("textarea");
-    box.id = id;
-    box.readOnly = true;
-    box.rows = 4;
-    box.spellcheck = false;
-    box.wrap = "soft";
-    const copy = document.createElement("button");
-    copy.type = "button";
-    copy.dataset.copy = id;
-    copy.textContent = "Copy";
-    element("encrypted-output").append(label, box, copy);
-    output(id, fragment);
-  }
+  renderFragments("encrypted-output", "encrypted", encrypted);
 });
 
 submit("decrypt", async () => {
   const message = await decryptTextMessage(
     textarea("decrypt-message").value,
     keyInput("decrypt-private"),
-    keyInput("decrypt-sender"),
+    publicKeyInput("decrypt-sender"),
   );
   output("decrypted-output", formatPayload(message));
 });
 
-element("encrypt-preset").addEventListener("change", () => {
-  const preset = element("encrypt-preset");
-  if (!(preset instanceof HTMLSelectElement)) {
-    throw new Error("Expected size preset");
-  }
-  if (preset.value !== "custom") {
-    input("encrypt-fragment-size").value = preset.value.split("-")[0];
-  }
-  clearResult("encrypt");
+select("export-preset").replaceChildren(
+  ...Array.from(
+    select("encrypt-preset").options,
+    (option) => option.cloneNode(true),
+  ),
+);
+for (const command of ["encrypt", "export"]) {
+  select(`${command}-preset`).addEventListener("change", () => {
+    const preset = select(`${command}-preset`);
+    if (preset.value !== "custom") {
+      input(`${command}-fragment-size`).value = preset.value.split("-")[0];
+    }
+    clearResult(command);
+  });
+  input(`${command}-fragment-size`).addEventListener("input", () => {
+    select(`${command}-preset`).value = "custom";
+  });
+}
+select("export-format").addEventListener("change", () => {
+  updateExportFormat();
+  clearResult("export");
 });
-input("encrypt-fragment-size").addEventListener("input", () => {
-  const preset = element("encrypt-preset");
-  if (preset instanceof HTMLSelectElement) preset.value = "custom";
-});
+updateExportFormat();
 
 for (const id of ["replace-cancel", "replace-confirm"]) {
   element(id).addEventListener("click", () => {
@@ -301,12 +371,20 @@ element("clear-all").addEventListener("click", () => {
     const input of document.querySelectorAll<HTMLTextAreaElement>("textarea")
   ) input.value = "";
   for (
-    const id of ["encrypt-subject", "encrypt-reply-epoch", "encrypt-reply-id"]
+    const id of [
+      "encrypt-subject",
+      "export-subject",
+      "encrypt-reply-epoch",
+      "encrypt-reply-id",
+    ]
   ) input(id).value = "";
-  input("encrypt-crc32").checked = false;
-  input("encrypt-fragment-size").value = "280";
-  const preset = element("encrypt-preset");
-  if (preset instanceof HTMLSelectElement) preset.value = "280";
+  for (const command of ["encrypt", "export"]) {
+    input(`${command}-crc32`).checked = false;
+    input(`${command}-fragment-size`).value = "280";
+    select(`${command}-preset`).value = "280";
+  }
+  select("export-format").value = "profile1";
+  updateExportFormat();
   for (const command of Object.keys(outputs)) clearResult(command);
   element("copy-status").textContent = "";
 });

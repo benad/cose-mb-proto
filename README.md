@@ -8,12 +8,14 @@ Run `deno task start --help` for usage.
 
 | Command         | Options                                                                                                 |
 | --------------- | ------------------------------------------------------------------------------------------------------- |
-| `generate`      | `--private PATH --public PATH`                                                                          |
-| `export-public` | `--private PATH --out PATH`                                                                             |
+| `generate`      | `--private PATH --public PATH [--public-format profile1\|cose\|jwk]`                                    |
+| `export-public` | `--private PATH --out PATH [--public-format profile1\|cose\|jwk]`                                       |
 | `encrypt`       | `--sender-private PATH --recipient-public PATH (--in TEXT_FILE \| --text MESSAGE) --out FRAGMENTS_FILE` |
 | `decrypt`       | `--recipient-private PATH --sender-public PATH --in FRAGMENTS_FILE [--out TEXT_FILE] [--json]`          |
 
 Encryption also accepts `--subject TEXT`, `--crc32`, `--reply-to-epoch SECONDS --reply-to-id INTEGER`, and `--fragment-size CHARACTERS`. Both reply options must be supplied together. Numeric values must be safe integers; fragment size must be nonnegative. The default CLI fragment size is 0 (one unlimited fragment). A positive size includes the entire header and encoded body; impossible sizes fail instead of exceeding the limit. Header subjects are optional, 1–18 ASCII characters without semicolons or CR/LF. Subject and optional CRC32 are included only in fragment 1.
+
+Public exports from `generate` and `export-public` default to `--public-format profile1`: a public-only COSE_Key inside a profile-1 COSE_MB wrapper, encoded as C1/base64url fragments. They accept the same `--subject`, `--crc32`, and `--fragment-size` options. Explicit `--public-format cose` exports raw public COSE_Key CBOR; `--public-format jwk` exports public JWK JSON. Transport options are rejected with raw formats instead of ignored. Private generation stays raw COSE_Key CBOR, regardless of the public format.
 
 All paths are explicit. Options accept `--name value` or `--name=value`. Existing output files are never overwritten; there is no force option. If generating two files fails after saving the private key, the error identifies the partial result.
 
@@ -27,7 +29,11 @@ The `--text` value may appear in shell history and process arguments. Use file i
 
 Run `deno task build:web`, then open `out/cose-mb.html` directly from disk in a current browser. Only this one file is needed: Oat styling, JavaScript, dependencies, and licenses are embedded. No server, installation, CDN, or network connection is required to use the generated page. The page checks that secure WebCrypto is available for its local-file context; unsupported browsers show an explanation rather than using weaker cryptography.
 
-The four tabs generate a private keypair, export its public key, encrypt/sign for one recipient, and decrypt/verify. Key inputs accept standard base64 COSE_Key CBOR or plain, formatted JWK JSON; generation and public export show both representations. Message inputs/outputs instead use C1 text fragments containing an unpadded base64url COSE_MB wrapper; do not pass message files through the command-line `base64` tool.
+The four tabs generate a private keypair, export its public key, encrypt/sign for one recipient, and decrypt/verify. Private-key inputs accept standard base64 COSE_Key CBOR or plain JWK JSON; generation shows both private representations and retains its confirmation-protected autofill. Public export defaults to encoded profile 1, with explicit raw base64 COSE_Key and JWK JSON alternatives. Recipient and sender public-key inputs prefer profile-1 fragments, while retaining base64 COSE_Key and JWK support. Public-key fragments may be pasted in any order with body line breaks.
+
+Profile-1 public export offers subject, CRC32, size presets/custom sizing, and separate wrapped fragment boxes with **Copy** buttons, just like encrypted messages. Transport controls are disabled/hidden for raw public formats. Public encoding and CRC32 do not authenticate key ownership; validate identity externally. Private material is never included in a public export.
+
+Encrypted-message inputs/outputs use profile-2 C1 text fragments containing an unpadded base64url COSE_MB wrapper. Do not pass either profile-1 public files or profile-2 message files through the command-line `base64` tool.
 
 Encryption offers optional subject, CRC32, and paired reply-to fields. The default fragment limit is 280 characters. Presets are X (280), Threads (500), Bluesky (300), Mastodon (500), and unlimited (0), with a custom numeric size. Each fragment is displayed in its own wrapping readonly text box with a **Copy** button that copies the complete fragment without inserting visual line breaks. Paste all fragments into Decrypt in any order; the authenticated result displays time, ID, optional reply metadata, and text.
 
@@ -35,14 +41,14 @@ Generation fills the private-key fields of all three other tabs. If any private-
 
 Private keys are **not encrypted**. The application does not save keys or messages to storage or send them anywhere, but browser extensions, browser memory/history, shared devices, and the clipboard remain relevant risks. Copy buttons require an explicit click; if clipboard permissions are unavailable, select the output and copy manually. “Clear all fields” is not secure erasure. Browser text inputs normalize line breaks to LF; decrypted text from the CLI preserves its original CRLF/newline content in the preformatted output.
 
-For key-file interchange, encode CLI key outputs with `base64 local/alice-private.cbor`. Paste browser key output into a text file, then decode it, for example:
+For private-key or explicit raw COSE key-file interchange, encode CLI output with `base64 local/alice-private.cbor`. Paste browser base64 key output into a text file, then decode it, for example:
 
 ```sh
 umask 077
 base64 --decode < private-key.b64 > private-key.cbor
 ```
 
-Message interchange needs no additional encoding: paste complete browser fragments into a UTF-8 text file for CLI decryption, or paste the CLI fragment file directly into the web tool. The shell redirection above can overwrite files, unlike the CLI commands. Choose new paths and protect private-key files with appropriate filesystem permissions. Never put private keys in public posts.
+Encoded public-key and message interchange needs no additional encoding: paste complete browser fragments into a UTF-8 text file for the CLI, or paste the CLI fragment file directly into the web tool. Use public-key files as `--recipient-public` or `--sender-public`, and message files as decrypt `--in`. The shell redirection above can overwrite files, unlike the CLI commands. Choose new paths and protect private-key files with appropriate filesystem permissions. Never put private keys in public posts.
 
 ## Two-account round-trip
 
@@ -50,19 +56,19 @@ Use the Git-ignored `local/` directory for generated keys and messages. Private 
 
 ```sh
 mkdir -p local
-deno task start generate --private local/alice-private.cbor --public local/alice-public.cbor
-deno task start generate --private local/bob-private.cbor --public local/bob-public.cbor
-deno task start export-public --private local/alice-private.cbor --out local/alice-exported-public.cbor
-deno task start encrypt --sender-private local/alice-private.cbor --recipient-public local/bob-public.cbor --text "Hello, Bob!" --subject "Hello to you" --crc32 --fragment-size 140 --out local/message.txt
-deno task start decrypt --recipient-private local/bob-private.cbor --sender-public local/alice-public.cbor --in local/message.txt
-deno task start decrypt --recipient-private local/bob-private.cbor --sender-public local/alice-public.cbor --in local/message.txt --json --out local/decrypted.json
+deno task start generate --private local/alice-private.cbor --public local/alice-public.txt
+deno task start generate --private local/bob-private.cbor --public local/bob-public.txt
+deno task start export-public --private local/alice-private.cbor --out local/alice-exported-public.txt --crc32 --fragment-size 140
+deno task start encrypt --sender-private local/alice-private.cbor --recipient-public local/bob-public.txt --text "Hello, Bob!" --subject "Hello to you" --crc32 --fragment-size 140 --out local/message.txt
+deno task start decrypt --recipient-private local/bob-private.cbor --sender-public local/alice-public.txt --in local/message.txt
+deno task start decrypt --recipient-private local/bob-private.cbor --sender-public local/alice-public.txt --in local/message.txt --json --out local/decrypted.json
 ```
 
 For file input, replace `--text "Hello, Bob!"` with `--in local/plain.txt` and choose a new ciphertext filename.
 
 ## Keys and message representation
 
-Generation and public export produce COSE_Key CBOR. Key input also accepts JWK JSON objects. A private input must contain a complete matching P-256 keypair; a public input must not contain its private scalar. Points, scalar range, coordinate lengths, and declared usages are validated.
+Private generation produces COSE_Key CBOR. Public export prefers [profile 1](Public%20Key%20Message%20Profile.md), using `{0: bstr(serialized public COSE_Key), 1: 1}`. It contains no signature, encryption, private scalar, or encrypted-message payload. CLI public inputs accept encoded profile-1 text, raw COSE_Key CBOR, or JWK JSON; web inputs additionally represent raw COSE as standard base64. Raw outputs are explicit export alternatives. A private input must contain a complete matching P-256 keypair; a public input must not contain its private scalar. Points, scalar range, coordinate lengths, and declared usages are validated. Encoded public inputs are rejected if they contain the wrong profile, private material, or something other than a public COSE_Key.
 
 Each account reuses one static P-256 keypair for signing and ECDH. Stored keys must omit `alg`; message headers carry the algorithms. The older prototype's `alg=-9` files are rejected, not silently converted. Generate new keys or explicitly convert existing keys outside this CLI. If `key_ops` or JWK `use` is present, its restrictions are enforced. Public export refuses restricted private inputs rather than discarding their restrictions.
 
@@ -70,14 +76,14 @@ The signed application payload is a CBOR map: data label 0 contains a UTF-8 byte
 
 The ciphertext is a tagged COSE_Encrypt with exactly one ECDH-ES+HKDF-256 recipient; the encrypted content is a tagged COSE_Sign1. Its bytes are wrapped as `{0: p_object, 1: 2}` and encoded as C1 text fragments. Headers obey 50-character overall and 20-character field limits. Multipart output has a random grouping ID, distinct from payload ID 0. Reassembly requires every part exactly once with consistent total, grouping ID, and effective encoding; reserved encodings, malformed/canonicality failures, and CRC mismatches are rejected. CBOR decoding rejects duplicate map labels and trailing bytes, preserves tags and protected-header bytes, and limits nesting to 16 levels. Input and output are buffered in memory.
 
-**Compatibility change:** CLI/web encrypted-message input is now exclusively the C1 profile-2 transport. Older bare COSE CBOR files and standard-base64 encrypted messages are rejected; key formats are unchanged. The existing low-level text-signing/crypto helpers remain available for independent tests, while applications use `encryptTextMessage` and `decryptTextMessage`. The [worked example](Single-Recipient%20Encrypted%20Message%20Example.md) is covered by a CLI interoperability test.
+**Compatibility changes:** CLI/web encrypted-message input is exclusively the C1 profile-2 transport. Older bare COSE CBOR files and standard-base64 encrypted messages are rejected. Public output now defaults to profile-1 text; choose an explicit raw format for older consumers. Raw public-key inputs and private-key formats remain supported unchanged. The existing low-level text-signing/crypto helpers remain available for independent tests, while applications use `encryptTextMessage` and `decryptTextMessage`. The [worked example](Single-Recipient%20Encrypted%20Message%20Example.md) is covered by a CLI interoperability test.
 
 ## Permissions and development
 
 The `start` task grants filesystem read/write access, but no network, environment, or subprocess permissions. For narrower access, invoke the entry point directly with explicit paths:
 
 ```sh
-deno run --allow-read=local/alice-private.cbor,local/bob-public.cbor --allow-write=local/scoped-message.txt main.ts encrypt --sender-private local/alice-private.cbor --recipient-public local/bob-public.cbor --text "Hello, Bob!" --out local/scoped-message.txt
+deno run --allow-read=local/alice-private.cbor,local/bob-public.txt --allow-write=local/scoped-message.txt main.ts encrypt --sender-private local/alice-private.cbor --recipient-public local/bob-public.txt --text "Hello, Bob!" --out local/scoped-message.txt
 ```
 
 Dependencies are pinned in `imports.json` and `deno.lock`. Deno may download them on first use; the application itself does not access the network. The shared implementation uses native WebCrypto, `cbor2` for strict CBOR, and Noble P-256 for mathematical key validation. Tests also use a separate `cborg` encoder and Node WebCrypto for independent checks.

@@ -1,7 +1,9 @@
-import { exportPublicCoseKey, generateCoseKey } from "./cose.ts";
+import { exportPublicCoseKey, generateCoseKey, keyToJwk } from "./cose.ts";
 import {
   decryptTextMessage,
+  type EncodingOptions,
   encryptTextMessage,
+  exportPublicKeyMessage,
   formatPayload,
   integer,
   type MessageOptions,
@@ -21,8 +23,14 @@ export {
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
 const commands = {
-  generate: { required: ["private", "public"], optional: [] },
-  "export-public": { required: ["private", "out"], optional: [] },
+  generate: {
+    required: ["private", "public"],
+    optional: ["public-format", "subject", "crc32", "fragment-size"],
+  },
+  "export-public": {
+    required: ["private", "out"],
+    optional: ["public-format", "subject", "crc32", "fragment-size"],
+  },
   encrypt: {
     required: ["sender-private", "recipient-public", "out"],
     optional: [
@@ -42,14 +50,17 @@ const commands = {
 };
 
 const help = `Usage:
-  generate --private PATH --public PATH
-  export-public --private PATH --out PATH
+  generate --private PATH --public PATH [--public-format profile1|cose|jwk]
+  export-public --private PATH --out PATH [--public-format profile1|cose|jwk]
+    Public exports in profile1 mode also accept --subject TEXT, --crc32, --fragment-size CHARACTERS.
   encrypt --sender-private PATH --recipient-public PATH (--in TEXT_FILE | --text MESSAGE) --out FRAGMENTS_FILE
     [--subject TEXT] [--crc32] [--reply-to-epoch SECONDS --reply-to-id INTEGER] [--fragment-size CHARACTERS]
   decrypt --recipient-private PATH --sender-public PATH --in FRAGMENTS_FILE [--out TEXT_FILE] [--json]
 
 Use --help for help. Existing output files are never overwritten.
-Keys may be COSE_Key CBOR or JWK JSON; generation/export produce CBOR.
+Public exports default to profile1 text. Raw COSE CBOR and JWK are explicit alternatives.
+Public inputs accept profile1 fragments, raw COSE_Key CBOR or JWK JSON.
+Private generation produces raw COSE_Key CBOR; private inputs may also be JWK JSON.
 Encryption emits profile-2 base64url text fragments, one per line.
 Fragment size includes headers; default 0 emits one unlimited fragment.
 Messages carry current epoch seconds and integer ID 0.
@@ -134,10 +145,47 @@ export async function main(args: string[] = Deno.args): Promise<void> {
     if (value === undefined) throw new Error(`Missing option: --${name}`);
     return value;
   };
+  const numeric = (name: string): number => {
+    const value = option(name);
+    if (!/^-?(?:0|[1-9][0-9]*)$/.test(value)) {
+      throw new Error(`--${name} must be an integer`);
+    }
+    return integer(Number(value), `--${name}`);
+  };
+  const encodingOptions = (): EncodingOptions => ({
+    crc32: options.has("crc32"),
+    fragmentSize: options.has("fragment-size") ? numeric("fragment-size") : 0,
+    ...(options.has("subject") ? { subject: option("subject") } : {}),
+  });
+  const publicOutput = async (privateKey: Uint8Array): Promise<Uint8Array> => {
+    const format = options.get("public-format") ?? "profile1";
+    if (!["profile1", "cose", "jwk"].includes(format)) {
+      throw new Error("Unknown public format");
+    }
+    if (
+      format !== "profile1" &&
+      ["subject", "crc32", "fragment-size"].some((name) => options.has(name))
+    ) {
+      throw new Error(
+        "Public export transport options require --public-format profile1",
+      );
+    }
+    if (format === "profile1") {
+      return new TextEncoder().encode(
+        (await exportPublicKeyMessage(privateKey, encodingOptions())).join(
+          "\n",
+        ) + "\n",
+      );
+    }
+    const publicKey = await exportPublicCoseKey(privateKey);
+    return format === "cose" ? publicKey : new TextEncoder().encode(
+      JSON.stringify(keyToJwk(publicKey, false), null, 2) + "\n",
+    );
+  };
   switch (command) {
     case "generate": {
       const privateKey = await generateCoseKey();
-      const publicKey = await exportPublicCoseKey(privateKey);
+      const publicKey = await publicOutput(privateKey);
       await writeNew(option("private"), privateKey, 0o600);
       try {
         await writeNew(option("public"), publicKey, 0o644);
@@ -149,15 +197,15 @@ export async function main(args: string[] = Deno.args): Promise<void> {
           { cause: error },
         );
       }
-      console.error("Saved private and public COSE keys.");
+      console.error("Saved private key and exported public key.");
       break;
     }
     case "export-public": {
-      const key = await exportPublicCoseKey(
+      const key = await publicOutput(
         await Deno.readFile(option("private")),
       );
       await writeNew(option("out"), key, 0o644);
-      console.error("Saved public COSE key.");
+      console.error("Saved public key.");
       break;
     }
     case "encrypt": {
@@ -167,22 +215,11 @@ export async function main(args: string[] = Deno.args): Promise<void> {
       const message = options.has("text")
         ? option("text")
         : textDecoder.decode(await Deno.readFile(option("in")));
-      const numeric = (name: string): number => {
-        const value = option(name);
-        if (!/^-?(?:0|[1-9][0-9]*)$/.test(value)) {
-          throw new Error(`--${name} must be an integer`);
-        }
-        return integer(Number(value), `--${name}`);
-      };
       if (options.has("reply-to-epoch") !== options.has("reply-to-id")) {
         throw new Error("Specify both --reply-to-epoch and --reply-to-id");
       }
       const encoding: MessageOptions = {
-        crc32: options.has("crc32"),
-        fragmentSize: options.has("fragment-size")
-          ? numeric("fragment-size")
-          : 0,
-        ...(options.has("subject") ? { subject: option("subject") } : {}),
+        ...encodingOptions(),
         ...(options.has("reply-to-epoch")
           ? {
             replyTo: {

@@ -2,7 +2,7 @@
 
 Document version ID: 20261115
 
-Profile ID: 2
+Profile ID: 1
 
 See COSE_Key.
 

@@ -17,6 +17,7 @@ import {
   decodeFragments,
   encodeFragments,
   formatPayload,
+  normalizePublicKey,
 } from "../../message.ts";
 
 const endpoint = Deno.args[0];
@@ -234,18 +235,71 @@ for (
         path("bob-public.cbor"),
       ]);
       const bob = await Deno.readFile(path("bob-private.cbor"));
-      const bobPublic = await Deno.readFile(path("bob-public.cbor"));
+      const bobPublicFile = await Deno.readFile(path("bob-public.cbor"));
+      const bobPublic = normalizePublicKey(bobPublicFile);
       const bobBase64 = toBase64(bob);
       const bobPublicBase64 = Buffer.from(bobPublic).toString("base64");
       await tab(page, "export");
       await page.locator("#export-private").fill(aliceJwk);
       await submit(page, "export");
+      assert.equal(
+        await page.locator("#export-format").inputValue(),
+        "profile1",
+      );
+      const alicePublicProfile =
+        (await page.locator("#public-output textarea").evaluateAll(
+          (elements) => elements.map((el) => (el as HTMLTextAreaElement).value),
+        )).join("\n");
+      assert.deepEqual(
+        normalizePublicKey(new TextEncoder().encode(alicePublicProfile)),
+        normalizePublicKey(await Deno.readFile(path("alice-public.cbor"))),
+      );
+      await page.locator("#export-subject").fill("Hello to you");
+      assert.equal(await page.locator("#public-output textarea").count(), 0);
+      await page.locator("#export-crc32").check();
+      await page.locator("#export-fragment-size").fill("80");
+      await submit(page, "export");
+      const publicFragments = await page.locator("#public-output textarea")
+        .evaluateAll(
+          (elements) => elements.map((el) => (el as HTMLTextAreaElement).value),
+        );
+      assert(
+        publicFragments.length > 1 &&
+          publicFragments.every((f) => f.length <= 80),
+      );
+      assert(publicFragments[0].includes("S=Hello to you;C="));
+      await page.evaluate(() =>
+        Object.defineProperty(navigator, "clipboard", {
+          configurable: true,
+          value: {
+            writeText: (text: string) => {
+              document.body.dataset.copied = text;
+              return Promise.resolve();
+            },
+          },
+        })
+      );
+      await page.locator("#public-output button").first().click();
+      assert.equal(
+        await page.locator("body").getAttribute("data-copied"),
+        publicFragments[0],
+      );
+      await Deno.writeTextFile(
+        path("alice-public.cbor"),
+        publicFragments.reverse().join("\r\n"),
+      );
+      await page.locator("#export-format").selectOption("cose");
+      assert(await page.locator("#export-transport").isHidden());
+      assert.equal(await page.locator("#public-output textarea").count(), 0);
+      await submit(page, "export");
       const alicePublicBase64 = await page.locator("#exported-public")
         .inputValue();
       assert.deepEqual(
         fromBase64(alicePublicBase64),
-        await Deno.readFile(path("alice-public.cbor")),
+        normalizePublicKey(await Deno.readFile(path("alice-public.cbor"))),
       );
+      await page.locator("#export-format").selectOption("jwk");
+      await submit(page, "export");
       const publicJwk = await page.locator("#exported-jwk").inputValue();
       assert(!("d" in JSON.parse(publicJwk)));
       await tab(page, "encrypt");
@@ -269,7 +323,9 @@ for (
         );
       }
       await page.locator("#encrypt-private").fill(aliceJwk);
-      await page.locator("#encrypt-recipient").fill(bobPublicBase64);
+      await page.locator("#encrypt-recipient").fill(
+        new TextDecoder().decode(bobPublicFile),
+      );
       await page.locator("#encrypt-message").fill("fragment controls");
       await page.locator("#encrypt-fragment-size").fill("140");
       assert.equal(
@@ -320,7 +376,7 @@ for (
         .waitFor();
       await tab(page, "decrypt");
       await page.locator("#decrypt-private").fill(bobBase64);
-      await page.locator("#decrypt-sender").fill(alicePublicBase64);
+      await page.locator("#decrypt-sender").fill(publicFragments.join("\n"));
       await page.locator("#decrypt-message").fill(
         controlFragments.reverse().map((f) => {
           const end = f.indexOf(";;") + 2;
@@ -334,6 +390,19 @@ for (
           "ID: 0\nReply to: 2026-11-15T00:00:00.000Z (1794700800), ID 0\nMessage:\nfragment controls",
         ),
       );
+      const privateProfile = encodeFragments(
+        await encodeCbor(
+          new Map<number, unknown>([[0, alice], [1, 1]]),
+        ),
+      ).join("\n");
+      for (
+        const invalidPublic of [privateProfile, controlFragments.join("\n")]
+      ) {
+        await page.locator("#decrypt-sender").fill(invalidPublic);
+        await submit(page, "decrypt", true);
+        assert.equal(await page.locator("#decrypted-output").textContent(), "");
+        assert(await page.locator("[data-copy=decrypted-output]").isDisabled());
+      }
       await tab(page, "encrypt");
       await page.locator("#encrypt-crc32").uncheck();
       assert.equal(await page.locator("#encrypted-output textarea").count(), 0);
@@ -515,6 +584,14 @@ for (
       );
       assert.equal(await page.locator("#encrypt-subject").inputValue(), "");
       assert(!(await page.locator("#encrypt-crc32").isChecked()));
+      assert.equal(
+        await page.locator("#export-format").inputValue(),
+        "profile1",
+      );
+      assert.equal(
+        await page.locator("#export-fragment-size").inputValue(),
+        "280",
+      );
       assert.deepEqual(network, []);
       assert.deepEqual(errors, []);
     } finally {

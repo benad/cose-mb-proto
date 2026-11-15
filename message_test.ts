@@ -9,6 +9,7 @@ import {
   exportPublicCoseKey,
   fromBase64,
   generateCoseKey,
+  keyToJwk,
 } from "./cose.ts";
 import {
   crc32,
@@ -18,8 +19,10 @@ import {
   encodeFragments,
   encodePayload,
   encryptTextMessage,
+  exportPublicKeyMessage,
   formatPayload,
   fromBase64Url,
+  normalizePublicKey,
   toBase64Url,
 } from "./message.ts";
 
@@ -286,6 +289,70 @@ Deno.test("published profile-2 example decrypts through the shared transport", a
   );
 });
 
+Deno.test("public profile1 export preserves public-only keys and supports both crypto roles", async () => {
+  const sender = await generateCoseKey(), receiver = await generateCoseKey();
+  const senderPublic = await exportPublicCoseKey(sender);
+  const receiverPublic = await exportPublicCoseKey(receiver);
+  const fragments = await exportPublicKeyMessage(receiver, {
+    fragmentSize: 80,
+    subject: "Hello to you",
+    crc32: true,
+  });
+  const encoder = new TextEncoder();
+  const encodedReceiver = encoder.encode(fragments.reverse().join("\r\n"));
+  assert.deepEqual(normalizePublicKey(encodedReceiver), receiverPublic);
+  assert.deepEqual(normalizePublicKey(receiverPublic), receiverPublic);
+  const jwk = encoder.encode(JSON.stringify(keyToJwk(receiverPublic, false)));
+  assert.deepEqual(normalizePublicKey(jwk), jwk);
+  const wrappedSender = encoder.encode(
+    (await exportPublicKeyMessage(sender)).join("\n"),
+  );
+  const message = await encryptTextMessage(
+    "profile1 input",
+    sender,
+    encodedReceiver,
+  );
+  assert.equal(
+    (await decryptTextMessage(message.join("\n"), receiver, wrappedSender))
+      .data,
+    "profile1 input",
+  );
+  const wrapper = decodeCbor(
+    decodeFragments(new TextDecoder().decode(wrappedSender)),
+  );
+  assert(wrapper instanceof Map && wrapper.get(1) === 1);
+  assert.deepEqual(wrapper.get(0), senderPublic);
+  for (
+    const value of [
+      new Map<number, unknown>([[0, sender], [1, 1]]),
+      new Map<number, unknown>([[0, senderPublic], [1, 2]]),
+      new Map<number, unknown>([[0, "not bytes"], [1, 1]]),
+      new Map<number, unknown>([[0, jwk], [1, 1]]),
+    ]
+  ) {
+    const text = encoder.encode(
+      encodeFragments(await encodeCbor(value)).join("\n"),
+    );
+    assert.throws(() => normalizePublicKey(text));
+  }
+  assert.throws(() => normalizePublicKey(sender), /private scalar/);
+  assert.throws(() => normalizePublicKey(encoder.encode("C1;;not-valid!")));
+  const restricted = decodeCbor(receiverPublic);
+  assert(restricted instanceof Map);
+  restricted.set(4, [2]);
+  const restrictedText = encoder.encode(
+    encodeFragments(
+      await encodeCbor(
+        new Map<number, unknown>([[0, await encodeCbor(restricted)], [1, 1]]),
+      ),
+    ).join("\n"),
+  );
+  await assert.rejects(
+    () => encryptTextMessage("not permitted", sender, restrictedText),
+    /does not permit/,
+  );
+});
+
 Deno.test("CLI emits bounded lines, paired reply metadata and authenticated JSON/display", async () => {
   const dir = await Deno.makeTempDir({ prefix: "cose-fragment-cli-" });
   const main = fileURLToPath(new URL("main.ts", import.meta.url));
@@ -319,6 +386,107 @@ Deno.test("CLI emits bounded lines, paired reply metadata and authenticated JSON
     await Deno.writeFile(
       join(dir, "receiver-public"),
       await exportPublicCoseKey(receiver),
+    );
+    const generated = await run([
+      "generate",
+      "--private",
+      "new-private",
+      "--public",
+      "new-public",
+    ]);
+    assert(generated.success, generated.error);
+    assert.deepEqual(
+      normalizePublicKey(await Deno.readFile(join(dir, "new-public"))),
+      await exportPublicCoseKey(await Deno.readFile(join(dir, "new-private"))),
+    );
+    const exported = await run([
+      "export-public",
+      "--private",
+      "sender",
+      "--out",
+      "sender-profile",
+      "--fragment-size",
+      "80",
+      "--subject",
+      "Hello to you",
+      "--crc32",
+    ]);
+    assert(exported.success, exported.error);
+    const profileText = await Deno.readTextFile(join(dir, "sender-profile"));
+    assert(profileText.trimEnd().split("\n").every((f) => f.length <= 80));
+    assert.deepEqual(
+      normalizePublicKey(new TextEncoder().encode(profileText)),
+      await exportPublicCoseKey(sender),
+    );
+    await Deno.writeTextFile(
+      join(dir, "sender-public"),
+      profileText.trimEnd().split("\n").reverse().join("\n"),
+    );
+    const recipientProfile = await run([
+      "export-public",
+      "--private",
+      "receiver",
+      "--out",
+      "receiver-profile",
+    ]);
+    assert(recipientProfile.success, recipientProfile.error);
+    await Deno.writeFile(
+      join(dir, "receiver-public"),
+      await Deno.readFile(join(dir, "receiver-profile")),
+    );
+    for (const format of ["cose", "jwk"]) {
+      const alternate = await run([
+        "export-public",
+        "--private",
+        "sender",
+        "--out",
+        `public-${format}`,
+        "--public-format",
+        format,
+      ]);
+      assert(alternate.success, alternate.error);
+      const publicBytes = await Deno.readFile(join(dir, `public-${format}`));
+      assert.deepEqual(
+        keyToJwk(normalizePublicKey(publicBytes), false),
+        keyToJwk(await exportPublicCoseKey(sender), false),
+      );
+    }
+    for (
+      const options of [
+        ["--public-format", "unknown"],
+        ["--public-format", "cose", "--crc32"],
+        ["--public-format", "jwk", "--fragment-size", "0"],
+        ["--fragment-size", "1"],
+      ]
+    ) {
+      const invalid = await run([
+        "export-public",
+        "--private",
+        "sender",
+        "--out",
+        "invalid-public",
+        ...options,
+      ]);
+      assert(!invalid.success);
+      await assert.rejects(
+        () => Deno.stat(join(dir, "invalid-public")),
+        Deno.errors.NotFound,
+      );
+    }
+    const invalidGenerate = await run([
+      "generate",
+      "--private",
+      "invalid-private",
+      "--public",
+      "invalid-public",
+      "--public-format",
+      "jwk",
+      "--crc32",
+    ]);
+    assert(!invalidGenerate.success);
+    await assert.rejects(
+      () => Deno.stat(join(dir, "invalid-private")),
+      Deno.errors.NotFound,
     );
     const encrypt = [
       "encrypt",

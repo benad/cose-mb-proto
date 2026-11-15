@@ -4,7 +4,9 @@ import {
   decryptPayloadBytes,
   encodeCbor,
   encryptPayloadBytes,
+  exportPublicCoseKey,
   fromBase64,
+  keyToJwk,
   toBase64,
 } from "./cose.ts";
 
@@ -325,6 +327,45 @@ export function decodeFragments(input: string): Uint8Array {
   return decoded;
 }
 
+async function encodeProfile(
+  object: Uint8Array,
+  id: number,
+  options: EncodingOptions,
+): Promise<string[]> {
+  return encodeFragments(
+    await encodeCbor(new Map<number, unknown>([[0, object], [1, id]])),
+    options,
+  );
+}
+
+function decodeProfile(fragments: string, id: number): Uint8Array {
+  const wrapper = decodeCbor(decodeFragments(fragments));
+  if (
+    !(wrapper instanceof Map) || wrapper.size !== 2 ||
+    wrapper.get(1) !== id || !(wrapper.get(0) instanceof Uint8Array)
+  ) throw new Error(`Expected a COSE_MB wrapper with profile ID ${id}`);
+  return new Uint8Array(wrapper.get(0));
+}
+
+export function normalizePublicKey(input: Uint8Array): Uint8Array {
+  const text = new TextDecoder().decode(input).replace(/^[\r\n]+/, "");
+  const encoded = text.startsWith("C1;");
+  const key = encoded ? decodeProfile(decoder.decode(input), 1) : input;
+  if (encoded && !(decodeCbor(key) instanceof Map)) {
+    throw new Error("Profile 1 must contain a serialized COSE_Key map");
+  }
+  // Validate public-only shape and mathematical consistency without losing restrictions.
+  keyToJwk(key, false);
+  return key;
+}
+
+export async function exportPublicKeyMessage(
+  privateKey: Uint8Array,
+  options: EncodingOptions = {},
+): Promise<string[]> {
+  return await encodeProfile(await exportPublicCoseKey(privateKey), 1, options);
+}
+
 export async function encryptTextMessage(
   data: string,
   senderPrivate: Uint8Array,
@@ -342,12 +383,9 @@ export async function encryptTextMessage(
   const encrypted = await encryptPayloadBytes(
     payload,
     senderPrivate,
-    recipientPublic,
+    normalizePublicKey(recipientPublic),
   );
-  return encodeFragments(
-    await encodeCbor(new Map<number, unknown>([[0, encrypted], [1, 2]])),
-    options,
-  );
+  return await encodeProfile(encrypted, 2, options);
 }
 
 export async function decryptTextMessage(
@@ -355,13 +393,12 @@ export async function decryptTextMessage(
   recipientPrivate: Uint8Array,
   senderPublic: Uint8Array,
 ): Promise<PlaintextPayload> {
-  const wrapper = decodeCbor(decodeFragments(fragments));
-  if (
-    !(wrapper instanceof Map) || wrapper.size !== 2 ||
-    wrapper.get(1) !== 2 || !(wrapper.get(0) instanceof Uint8Array)
-  ) throw new Error("Expected a COSE_MB wrapper with profile ID 2");
   return decodePayload(
-    await decryptPayloadBytes(wrapper.get(0), recipientPrivate, senderPublic),
+    await decryptPayloadBytes(
+      decodeProfile(fragments, 2),
+      recipientPrivate,
+      normalizePublicKey(senderPublic),
+    ),
   );
 }
 

@@ -55,14 +55,36 @@
       <form id="export" autocomplete="off">
         <label for="export-private">Private keypair: base64 COSE_Key or plain JWK JSON</label>
         <textarea id="export-private" data-private required rows="5" spellcheck="false"></textarea>
+        <label for="export-format">Public-key export format</label>
+        <select id="export-format">
+          <option value="profile1" selected>Encoded profile 1 (preferred)</option>
+          <option value="cose">Raw COSE_Key (base64)</option>
+          <option value="jwk">Raw JWK JSON</option>
+        </select>
+        <fieldset id="export-transport">
+          <legend>Profile-1 text encoding</legend>
+          <label for="export-subject">Optional header subject (1-18 ASCII characters)</label>
+          <input id="export-subject" type="text" maxlength="18" spellcheck="false">
+          <label><input id="export-crc32" type="checkbox"> Add CRC32 header</label>
+          <label for="export-preset">Fragment size preset (including headers)</label>
+          <select id="export-preset"><option value="280">X (280)</option></select>
+          <label for="export-fragment-size">Maximum characters per fragment (0 means unlimited)</label>
+          <input id="export-fragment-size" type="number" min="0" step="1" required value="280">
+        </fieldset>
+        <p>Profile 1 contains only the public key. Encoding and CRC32 do not authenticate its owner; verify key identity externally.</p>
         <button type="submit">Export public key</button>
         <p role="status" id="export-status" aria-live="polite"></p>
-        <label for="exported-public">Public key: base64 COSE_Key</label>
-        <textarea id="exported-public" readonly rows="4" spellcheck="false"></textarea>
-        <button type="button" data-copy="exported-public">Copy base64 public key</button>
-        <label for="exported-jwk">Public key: JWK JSON</label>
-        <textarea id="exported-jwk" readonly rows="8" spellcheck="false"></textarea>
-        <button type="button" data-copy="exported-jwk">Copy public JWK</button>
+        <div id="public-output"></div>
+        <div id="export-cose-output" hidden>
+          <label for="exported-public">Raw public key: base64 COSE_Key</label>
+          <textarea id="exported-public" readonly rows="4" spellcheck="false"></textarea>
+          <button type="button" data-copy="exported-public">Copy base64 public key</button>
+        </div>
+        <div id="export-jwk-output" hidden>
+          <label for="exported-jwk">Raw public key: JWK JSON</label>
+          <textarea id="exported-jwk" readonly rows="8" spellcheck="false"></textarea>
+          <button type="button" data-copy="exported-jwk">Copy public JWK</button>
+        </div>
       </form>
     </section>
     <section role="tabpanel" id="panel-encrypt" aria-labelledby="tab-encrypt" hidden>
@@ -72,7 +94,7 @@
         <textarea id="encrypt-message" rows="6" spellcheck="false"></textarea>
         <label for="encrypt-private">Sender's private keypair: base64 COSE_Key or plain JWK JSON</label>
         <textarea id="encrypt-private" data-private required rows="5" spellcheck="false"></textarea>
-        <label for="encrypt-recipient">Recipient's public key: base64 COSE_Key or plain JWK JSON</label>
+        <label for="encrypt-recipient">Recipient's public key: profile-1 fragments (preferred), base64 COSE_Key or JWK JSON</label>
         <textarea id="encrypt-recipient" required rows="4" spellcheck="false"></textarea>
         <label for="encrypt-subject">Optional header subject (1-18 ASCII characters; not authenticated)</label>
         <input id="encrypt-subject" type="text" maxlength="18" spellcheck="false">
@@ -104,7 +126,7 @@
       <form id="decrypt" autocomplete="off">
         <label for="decrypt-message">C1 message fragments (any order; body line breaks are allowed)</label>
         <textarea id="decrypt-message" required rows="7" spellcheck="false"></textarea>
-        <label for="decrypt-sender">Sender's public key: base64 COSE_Key or plain JWK JSON</label>
+        <label for="decrypt-sender">Sender's public key: profile-1 fragments (preferred), base64 COSE_Key or JWK JSON</label>
         <textarea id="decrypt-sender" required rows="4" spellcheck="false"></textarea>
         <label for="decrypt-private">Recipient's private keypair: base64 COSE_Key or plain JWK JSON</label>
         <textarea id="decrypt-private" data-private required rows="5" spellcheck="false"></textarea>
