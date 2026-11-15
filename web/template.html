@@ -24,7 +24,7 @@
 <body>
   <header>
     <h1>COSE microblogging prototype</h1>
-    <p>Single-recipient message profile 20261108. Everything runs locally in this page; no server or network connection is needed.</p>
+    <p>Single-recipient profile 2 with payload and text encoding version 20261115. Everything runs locally in this page; no server or network connection is needed.</p>
     <p class="warning"><strong>Private keys are not encrypted.</strong> Anyone with a private keypair can sign as you and decrypt messages sent to you. Save it securely. Keys and plaintext are visible to your browser and any extensions with access to this page.</p>
     <noscript>JavaScript is required. No commands can run with JavaScript disabled.</noscript>
     <p id="availability" role="alert" hidden></p>
@@ -74,17 +74,35 @@
         <textarea id="encrypt-private" data-private required rows="5" spellcheck="false"></textarea>
         <label for="encrypt-recipient">Recipient's public key: base64 COSE_Key or plain JWK JSON</label>
         <textarea id="encrypt-recipient" required rows="4" spellcheck="false"></textarea>
+        <label for="encrypt-subject">Optional header subject (1-18 ASCII characters; not authenticated)</label>
+        <input id="encrypt-subject" type="text" maxlength="18" spellcheck="false">
+        <label><input id="encrypt-crc32" type="checkbox"> Add CRC32 header (detects accidental corruption)</label>
+        <label for="encrypt-reply-epoch">Optional reply-to epoch seconds (both reply fields are required together)</label>
+        <input id="encrypt-reply-epoch" type="text" inputmode="numeric">
+        <label for="encrypt-reply-id">Optional reply-to message ID</label>
+        <input id="encrypt-reply-id" type="text" inputmode="numeric">
+        <label for="encrypt-preset">Fragment size preset (including headers)</label>
+        <select id="encrypt-preset">
+          <option value="280" selected>X (280)</option>
+          <option value="500-threads">Threads (500)</option>
+          <option value="300">Bluesky (300)</option>
+          <option value="500-mastodon">Mastodon (500)</option>
+          <option value="0">Unlimited (0)</option>
+          <option value="custom">Custom</option>
+        </select>
+        <label for="encrypt-fragment-size">Maximum characters per fragment (0 means unlimited)</label>
+        <input id="encrypt-fragment-size" type="number" min="0" step="1" required value="280">
+        <p>New messages include the current epoch timestamp and message ID 0. No compression is used.</p>
         <button type="submit">Encrypt and sign</button>
         <p role="status" id="encrypt-status" aria-live="polite"></p>
-        <label for="encrypted-output">Encrypted and signed message: base64 CBOR</label>
-        <textarea id="encrypted-output" readonly rows="7" spellcheck="false"></textarea>
-        <button type="button" data-copy="encrypted-output">Copy encrypted message</button>
+        <h3>Encrypted message fragments: base64url COSE_MB</h3>
+        <div id="encrypted-output"></div>
       </form>
     </section>
     <section role="tabpanel" id="panel-decrypt" aria-labelledby="tab-decrypt" hidden>
       <h2>Decrypt and verify</h2>
       <form id="decrypt" autocomplete="off">
-        <label for="decrypt-message">Encrypted message: base64 CBOR</label>
+        <label for="decrypt-message">C1 message fragments (any order; body line breaks are allowed)</label>
         <textarea id="decrypt-message" required rows="7" spellcheck="false"></textarea>
         <label for="decrypt-sender">Sender's public key: base64 COSE_Key or plain JWK JSON</label>
         <textarea id="decrypt-sender" required rows="4" spellcheck="false"></textarea>
@@ -92,7 +110,7 @@
         <textarea id="decrypt-private" data-private required rows="5" spellcheck="false"></textarea>
         <button type="submit">Decrypt and verify</button>
         <p role="status" id="decrypt-status" aria-live="polite"></p>
-        <h3 id="decrypted-label">Verified plaintext</h3>
+        <h3 id="decrypted-label">Verified message time, ID, and text</h3>
         <pre id="decrypted-output" aria-labelledby="decrypted-label" tabindex="0"></pre>
         <button type="button" data-copy="decrypted-output">Copy verified plaintext</button>
       </form>

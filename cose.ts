@@ -414,9 +414,15 @@ export async function signMessage(
   message: string,
   senderPrivate: Uint8Array,
 ): Promise<Uint8Array> {
+  return await signPayloadBytes(await encodeCbor(message), senderPrivate);
+}
+
+async function signPayloadBytes(
+  payload: Uint8Array,
+  senderPrivate: Uint8Array,
+): Promise<Uint8Array> {
   const key = await importKey(readKey(senderPrivate, true), "sign");
   const protectedBytes = await encodeCbor(new Map([[1, -9]]));
-  const payload = await encodeCbor(message);
   const signature = await crypto.subtle.sign(
     signatureAlgorithm,
     key,
@@ -436,6 +442,17 @@ export async function verifyMessage(
   signed: Uint8Array,
   senderPublic: Uint8Array,
 ): Promise<string> {
+  const message = decodeCbor(await verifyPayloadBytes(signed, senderPublic));
+  if (typeof message !== "string") {
+    throw new Error("Authenticated payload must be a CBOR text string");
+  }
+  return message;
+}
+
+async function verifyPayloadBytes(
+  signed: Uint8Array,
+  senderPublic: Uint8Array,
+): Promise<Uint8Array> {
   const key = await importKey(readKey(senderPublic, false), "verify");
   const value = taggedArray(decodeCbor(signed), 18, 4);
   const protectedBytes = bytes(value[0], "Sign1 protected header");
@@ -456,11 +473,7 @@ export async function verifyMessage(
   ) {
     throw new Error("Sender signature verification failed");
   }
-  const message = decodeCbor(payload);
-  if (typeof message !== "string") {
-    throw new Error("Authenticated payload must be a CBOR text string");
-  }
-  return message;
+  return payload;
 }
 
 async function contentKey(
@@ -504,8 +517,20 @@ export async function encryptMessage(
   senderPrivate: Uint8Array,
   recipientPublic: Uint8Array,
 ): Promise<Uint8Array> {
+  return await encryptPayloadBytes(
+    await encodeCbor(message),
+    senderPrivate,
+    recipientPublic,
+  );
+}
+
+export async function encryptPayloadBytes(
+  payload: Uint8Array,
+  senderPrivate: Uint8Array,
+  recipientPublic: Uint8Array,
+): Promise<Uint8Array> {
   const recipient = await importKey(readKey(recipientPublic, false), "agree");
-  const signed = await signMessage(message, senderPrivate);
+  const signed = await signPayloadBytes(payload, senderPrivate);
   const ephemeral = await crypto.subtle.generateKey(
     { name: "ECDH", namedCurve: curve },
     false,
@@ -547,6 +572,20 @@ export async function decryptMessage(
   recipientPrivate: Uint8Array,
   senderPublic: Uint8Array,
 ): Promise<string> {
+  const message = decodeCbor(
+    await decryptPayloadBytes(encrypted, recipientPrivate, senderPublic),
+  );
+  if (typeof message !== "string") {
+    throw new Error("Authenticated payload must be a CBOR text string");
+  }
+  return message;
+}
+
+export async function decryptPayloadBytes(
+  encrypted: Uint8Array,
+  recipientPrivate: Uint8Array,
+  senderPublic: Uint8Array,
+): Promise<Uint8Array> {
   const recipient = await importKey(readKey(recipientPrivate, true), "agree");
   // Validate the selected sender key before processing the encrypted message.
   const sender = readKey(senderPublic, false);
@@ -596,7 +635,7 @@ export async function decryptMessage(
     key,
     ciphertext,
   );
-  return await verifyMessage(new Uint8Array(signed), senderPublic);
+  return await verifyPayloadBytes(new Uint8Array(signed), senderPublic);
 }
 
 export function keyToJwk(buffer: Uint8Array, privateKey: boolean): JsonWebKey {

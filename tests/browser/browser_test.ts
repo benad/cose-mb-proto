@@ -13,6 +13,11 @@ import {
   keyToJwk,
   toBase64,
 } from "../../cose.ts";
+import {
+  decodeFragments,
+  encodeFragments,
+  formatPayload,
+} from "../../message.ts";
 
 const endpoint = Deno.args[0];
 if (!endpoint?.startsWith("ws://127.0.0.1:")) {
@@ -40,9 +45,17 @@ async function mutateEnvelope(
   encoded: string,
   mutate: (outer: unknown[]) => void,
 ): Promise<string> {
-  const envelope = decodeCbor(fromBase64(encoded));
+  const wrapper = map(decodeCbor(decodeFragments(encoded)));
+  const envelope = decodeCbor(bytes(wrapper.get(0)));
   mutate(tagged(envelope, 96));
-  return toBase64(await encodeCbor(envelope));
+  wrapper.set(0, await encodeCbor(envelope));
+  return encodeFragments(await encodeCbor(wrapper)).join("\n");
+}
+
+async function fragmentOutput(page: Page): Promise<string> {
+  return (await page.locator("#encrypted-output textarea").evaluateAll(
+    (elements) => elements.map((el) => (el as HTMLTextAreaElement).value),
+  )).join("\n");
 }
 
 async function badSignature(
@@ -235,6 +248,99 @@ for (
       );
       const publicJwk = await page.locator("#exported-jwk").inputValue();
       assert(!("d" in JSON.parse(publicJwk)));
+      await tab(page, "encrypt");
+      assert.equal(
+        await page.locator("#encrypt-fragment-size").inputValue(),
+        "280",
+      );
+      for (
+        const [preset, size] of [
+          ["500-threads", "500"],
+          ["300", "300"],
+          ["500-mastodon", "500"],
+          ["0", "0"],
+          ["280", "280"],
+        ]
+      ) {
+        await page.locator("#encrypt-preset").selectOption(preset);
+        assert.equal(
+          await page.locator("#encrypt-fragment-size").inputValue(),
+          size,
+        );
+      }
+      await page.locator("#encrypt-private").fill(aliceJwk);
+      await page.locator("#encrypt-recipient").fill(bobPublicBase64);
+      await page.locator("#encrypt-message").fill("fragment controls");
+      await page.locator("#encrypt-fragment-size").fill("140");
+      assert.equal(
+        await page.locator("#encrypt-preset").inputValue(),
+        "custom",
+      );
+      await page.locator("#encrypt-subject").fill("Hello to you");
+      await page.locator("#encrypt-crc32").check();
+      await page.locator("#encrypt-reply-epoch").fill("1794700800");
+      await submit(page, "encrypt", true);
+      assert.equal(await page.locator("#encrypted-output textarea").count(), 0);
+      await page.locator("#encrypt-reply-id").fill("0");
+      await submit(page, "encrypt");
+      const controlFragments = (await fragmentOutput(page)).split("\n");
+      assert(
+        controlFragments.length > 1 &&
+          controlFragments.every((f) => f.length <= 140),
+      );
+      assert(controlFragments[0].includes("S=Hello to you;C="));
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, "clipboard", {
+          configurable: true,
+          value: {
+            writeText: (value: string) => {
+              document.body.dataset.copied = value;
+              return Promise.resolve();
+            },
+          },
+        });
+      });
+      await page.locator("#encrypted-output button").first().click();
+      assert.equal(
+        await page.locator("body").getAttribute("data-copied"),
+        controlFragments[0],
+      );
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, "clipboard", {
+          configurable: true,
+          value: {
+            writeText: () => {
+              return Promise.reject(new Error("Denied"));
+            },
+          },
+        });
+      });
+      await page.locator("#encrypted-output button").first().click();
+      await page.locator("#copy-status").filter({ hasText: "Unable to copy" })
+        .waitFor();
+      await tab(page, "decrypt");
+      await page.locator("#decrypt-private").fill(bobBase64);
+      await page.locator("#decrypt-sender").fill(alicePublicBase64);
+      await page.locator("#decrypt-message").fill(
+        controlFragments.reverse().map((f) => {
+          const end = f.indexOf(";;") + 2;
+          return f.slice(0, end) + f.slice(end).replace(/.{19}/g, "$&\n");
+        }).join("\n"),
+      );
+      await submit(page, "decrypt");
+      const verified = await page.locator("#decrypted-output").textContent();
+      assert(
+        verified?.includes(
+          "ID: 0\nReply to: 2026-11-15T00:00:00.000Z (1794700800), ID 0\nMessage:\nfragment controls",
+        ),
+      );
+      await tab(page, "encrypt");
+      await page.locator("#encrypt-crc32").uncheck();
+      assert.equal(await page.locator("#encrypted-output textarea").count(), 0);
+      await page.locator("#encrypt-subject").fill("");
+      await page.locator("#encrypt-reply-epoch").fill("");
+      await page.locator("#encrypt-reply-id").fill("");
+      await page.locator("#encrypt-preset").selectOption("280");
       const messages = [
         "",
         "Hello, 🌍!\n<script>alert('not markup')</script>",
@@ -251,18 +357,26 @@ for (
         await page.locator("#encrypt-message").fill(message);
         const browserText = await page.locator("#encrypt-message").inputValue();
         await submit(page, "encrypt");
-        encrypted = await page.locator("#encrypted-output").inputValue();
-        await Deno.writeFile(path("from-browser.cbor"), fromBase64(encrypted));
+        encrypted = await fragmentOutput(page);
+        assert((await page.locator("#encrypted-output textarea").count()) > 0);
         assert.equal(
-          await cli([
-            "decrypt",
-            "--recipient-private",
-            path("bob-private.cbor"),
-            "--sender-public",
-            path("alice-public.cbor"),
-            "--in",
-            path("from-browser.cbor"),
-          ]),
+          await page.locator("#encrypted-output button").first().textContent(),
+          "Copy",
+        );
+        await Deno.writeTextFile(path("from-browser.cbor"), encrypted);
+        assert.equal(
+          JSON.parse(
+            await cli([
+              "decrypt",
+              "--json",
+              "--recipient-private",
+              path("bob-private.cbor"),
+              "--sender-public",
+              path("alice-public.cbor"),
+              "--in",
+              path("from-browser.cbor"),
+            ]),
+          ).data,
           browserText,
         );
         await Deno.writeTextFile(path("text.txt"), message, { mode: 0o600 });
@@ -284,12 +398,23 @@ for (
         );
         await page.locator("#decrypt-sender").fill(publicJwk);
         await page.locator("#decrypt-message").fill(
-          toBase64(await Deno.readFile(messagePath)),
+          await Deno.readTextFile(messagePath),
         );
         await submit(page, "decrypt");
         assert.equal(
           await page.locator("#decrypted-output").textContent(),
-          message,
+          formatPayload(JSON.parse(
+            await cli([
+              "decrypt",
+              "--json",
+              "--recipient-private",
+              path("bob-private.cbor"),
+              "--sender-public",
+              path("alice-public.cbor"),
+              "--in",
+              messagePath,
+            ]),
+          )),
         );
         assert.equal(await page.locator("#decrypted-output script").count(), 0);
         assert(await page.locator("[data-copy=decrypted-output]").isEnabled());
@@ -301,7 +426,7 @@ for (
       );
       await submit(page, "encrypt");
       assert.notEqual(
-        await page.locator("#encrypted-output").inputValue(),
+        await fragmentOutput(page),
         encrypted,
       );
       await tab(page, "decrypt");
@@ -310,7 +435,8 @@ for (
       for (
         const invalid of [
           "not base64!",
-          toBase64(new Uint8Array([...fromBase64(encrypted), 0])),
+          encodeFragments(new Uint8Array([...decodeFragments(encrypted), 0]))
+            .join("\n"),
           await mutateEnvelope(encrypted, (outer) => {
             const cipher = bytes(outer[2]);
             cipher[0] ^= 1;
@@ -322,7 +448,11 @@ for (
             iv[0] ^= 1;
             header.set(5, iv);
           }),
-          toBase64(await badSignature(fromBase64(encrypted), bob)),
+          await (async () => {
+            const wrapper = map(decodeCbor(decodeFragments(encrypted)));
+            wrapper.set(0, await badSignature(bytes(wrapper.get(0)), bob));
+            return encodeFragments(await encodeCbor(wrapper)).join("\n");
+          })(),
         ]
       ) {
         await page.locator("#decrypt-message").fill(invalid);
@@ -374,11 +504,17 @@ for (
           "Replacement did not update all private inputs",
         );
       }
-      assert.equal(await page.locator("#encrypted-output").inputValue(), "");
+      assert.equal(await page.locator("#encrypted-output textarea").count(), 0);
       assert.equal(await page.locator("#decrypted-output").textContent(), "");
       await page.locator("#clear-all").click();
       assert.equal(await page.locator("#generated-private").inputValue(), "");
       assert.equal(await page.locator("#encrypt-private").inputValue(), "");
+      assert.equal(
+        await page.locator("#encrypt-fragment-size").inputValue(),
+        "280",
+      );
+      assert.equal(await page.locator("#encrypt-subject").inputValue(), "");
+      assert(!(await page.locator("#encrypt-crc32").isChecked()));
       assert.deepEqual(network, []);
       assert.deepEqual(errors, []);
     } finally {

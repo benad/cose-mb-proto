@@ -1,9 +1,11 @@
+import { exportPublicCoseKey, generateCoseKey } from "./cose.ts";
 import {
-  decryptMessage,
-  encryptMessage,
-  exportPublicCoseKey,
-  generateCoseKey,
-} from "./cose.ts";
+  decryptTextMessage,
+  encryptTextMessage,
+  formatPayload,
+  integer,
+  type MessageOptions,
+} from "./message.ts";
 export {
   decodeCbor,
   decryptMessage,
@@ -23,23 +25,36 @@ const commands = {
   "export-public": { required: ["private", "out"], optional: [] },
   encrypt: {
     required: ["sender-private", "recipient-public", "out"],
-    optional: ["in", "text"],
+    optional: [
+      "in",
+      "text",
+      "subject",
+      "crc32",
+      "reply-to-epoch",
+      "reply-to-id",
+      "fragment-size",
+    ],
   },
   decrypt: {
     required: ["recipient-private", "sender-public", "in"],
-    optional: ["out"],
+    optional: ["out", "json"],
   },
 };
 
 const help = `Usage:
   generate --private PATH --public PATH
   export-public --private PATH --out PATH
-  encrypt --sender-private PATH --recipient-public PATH (--in TEXT_FILE | --text MESSAGE) --out CBOR_FILE
-  decrypt --recipient-private PATH --sender-public PATH --in CBOR_FILE [--out TEXT_FILE]
+  encrypt --sender-private PATH --recipient-public PATH (--in TEXT_FILE | --text MESSAGE) --out FRAGMENTS_FILE
+    [--subject TEXT] [--crc32] [--reply-to-epoch SECONDS --reply-to-id INTEGER] [--fragment-size CHARACTERS]
+  decrypt --recipient-private PATH --sender-public PATH --in FRAGMENTS_FILE [--out TEXT_FILE] [--json]
 
 Use --help for help. Existing output files are never overwritten.
 Keys may be COSE_Key CBOR or JWK JSON; generation/export produce CBOR.
-Decryption without --out writes only verified plaintext to stdout.
+Encryption emits profile-2 base64url text fragments, one per line.
+Fragment size includes headers; default 0 emits one unlimited fragment.
+Messages carry current epoch seconds and integer ID 0.
+Decryption displays verified time, ID and text, or named payload fields with --json.
+Legacy bare COSE ciphertext is not accepted.
 `;
 
 async function writeNew(
@@ -86,6 +101,13 @@ export async function main(args: string[] = Deno.args): Promise<void> {
       throw new Error(`Unknown option for ${command}: --${name}`);
     }
     if (options.has(name)) throw new Error(`Duplicate option: --${name}`);
+    if (name === "crc32" || name === "json") {
+      if (match[2] !== undefined) {
+        throw new Error(`--${name} does not take a value`);
+      }
+      options.set(name, "true");
+      continue;
+    }
     let value = match[2];
     if (value === undefined) {
       value = args[++index];
@@ -94,7 +116,7 @@ export async function main(args: string[] = Deno.args): Promise<void> {
       }
     }
     if (name !== "text" && !value) {
-      throw new Error(`Path for --${name} must not be empty`);
+      throw new Error(`Value for --${name} must not be empty`);
     }
     options.set(name, value);
   }
@@ -145,22 +167,56 @@ export async function main(args: string[] = Deno.args): Promise<void> {
       const message = options.has("text")
         ? option("text")
         : textDecoder.decode(await Deno.readFile(option("in")));
-      const encrypted = await encryptMessage(
+      const numeric = (name: string): number => {
+        const value = option(name);
+        if (!/^-?(?:0|[1-9][0-9]*)$/.test(value)) {
+          throw new Error(`--${name} must be an integer`);
+        }
+        return integer(Number(value), `--${name}`);
+      };
+      if (options.has("reply-to-epoch") !== options.has("reply-to-id")) {
+        throw new Error("Specify both --reply-to-epoch and --reply-to-id");
+      }
+      const encoding: MessageOptions = {
+        crc32: options.has("crc32"),
+        fragmentSize: options.has("fragment-size")
+          ? numeric("fragment-size")
+          : 0,
+        ...(options.has("subject") ? { subject: option("subject") } : {}),
+        ...(options.has("reply-to-epoch")
+          ? {
+            replyTo: {
+              timestamp: numeric("reply-to-epoch"),
+              id: numeric("reply-to-id"),
+            },
+          }
+          : {}),
+      };
+      const encrypted = await encryptTextMessage(
         message,
         await Deno.readFile(option("sender-private")),
         await Deno.readFile(option("recipient-public")),
+        encoding,
       );
-      await writeNew(option("out"), encrypted, 0o644);
+      await writeNew(
+        option("out"),
+        new TextEncoder().encode(encrypted.join("\n") + "\n"),
+        0o644,
+      );
       console.error("Saved signed and encrypted message.");
       break;
     }
     case "decrypt": {
-      const message = await decryptMessage(
-        await Deno.readFile(option("in")),
+      const message = await decryptTextMessage(
+        textDecoder.decode(await Deno.readFile(option("in"))),
         await Deno.readFile(option("recipient-private")),
         await Deno.readFile(option("sender-public")),
       );
-      const encoded = new TextEncoder().encode(message);
+      const encoded = new TextEncoder().encode(
+        options.has("json")
+          ? JSON.stringify(message, null, 2)
+          : formatPayload(message),
+      );
       if (options.has("out")) {
         await writeNew(option("out"), encoded, 0o600);
         console.error("Saved decrypted and verified message.");

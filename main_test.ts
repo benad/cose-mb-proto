@@ -7,6 +7,7 @@ import { webcrypto } from "node:crypto";
 import { encode as independentEncode } from "cborg";
 import { Tag } from "cbor2";
 import { fromBase64, keyToJwk, toBase64 } from "./cose.ts";
+import { decodeFragments, encodeFragments } from "./message.ts";
 import {
   decodeCbor,
   decryptMessage,
@@ -743,6 +744,7 @@ Deno.test("CLI round-trips files and text options without clobbering outputs or 
       "bob-public.cbor",
     ];
     const decryptOptions = [
+      "--json",
       "--recipient-private",
       "bob-private.cbor",
       "--sender-public",
@@ -759,7 +761,10 @@ Deno.test("CLI round-trips files and text options without clobbering outputs or 
       "message.cbor",
     ]);
     const stdout = await succeeds(directory, ["decrypt", ...decryptOptions]);
-    assert.equal(new TextDecoder().decode(stdout.stdout), text);
+    assert.equal(
+      JSON.parse(new TextDecoder().decode(stdout.stdout)).data,
+      text,
+    );
     assert.equal(stdout.stderr.length, 0);
     await succeeds(directory, [
       "decrypt",
@@ -768,7 +773,8 @@ Deno.test("CLI round-trips files and text options without clobbering outputs or 
       "decrypted.txt",
     ]);
     assert.equal(
-      await Deno.readTextFile(join(directory, "decrypted.txt")),
+      JSON.parse(await Deno.readTextFile(join(directory, "decrypted.txt")))
+        .data,
       text,
     );
     if (Deno.build.os !== "windows") {
@@ -785,13 +791,15 @@ Deno.test("CLI round-trips files and text options without clobbering outputs or 
       "empty.cbor",
     ]);
     assert.equal(
-      (await succeeds(directory, [
-        "decrypt",
-        ...decryptOptions.slice(0, -2),
-        "--in",
-        "empty.cbor",
-      ])).stdout.length,
-      0,
+      JSON.parse(new TextDecoder().decode(
+        (await succeeds(directory, [
+          "decrypt",
+          ...decryptOptions.slice(0, -2),
+          "--in",
+          "empty.cbor",
+        ])).stdout,
+      )).data,
+      "",
     );
     await succeeds(directory, [
       "encrypt",
@@ -801,14 +809,14 @@ Deno.test("CLI round-trips files and text options without clobbering outputs or 
       "direct.cbor",
     ]);
     assert.equal(
-      new TextDecoder().decode(
+      JSON.parse(new TextDecoder().decode(
         (await succeeds(directory, [
           "decrypt",
           ...decryptOptions.slice(0, -2),
           "--in",
           "direct.cbor",
         ])).stdout,
-      ),
+      )).data,
       "direct text",
     );
 
@@ -848,7 +856,8 @@ Deno.test("CLI round-trips files and text options without clobbering outputs or 
       originalKey,
     );
     assert.equal(
-      await Deno.readTextFile(join(directory, "decrypted.txt")),
+      JSON.parse(await Deno.readTextFile(join(directory, "decrypted.txt")))
+        .data,
       text,
     );
 
@@ -868,14 +877,18 @@ Deno.test("CLI round-trips files and text options without clobbering outputs or 
       "--out",
       "json-message.cbor",
     ]);
-    const encrypted = await Deno.readFile(join(directory, "message.cbor"));
+    const wrapper = keyMap(
+      decodeFragments(await Deno.readTextFile(join(directory, "message.cbor"))),
+    );
+    const encrypted = byteString(wrapper.get(0));
     const tampered = array(encrypted, 96, 4);
     const ciphertext = byteString(tampered[2]);
     ciphertext[0] ^= 1;
     tampered[2] = ciphertext;
-    await Deno.writeFile(
+    wrapper.set(0, await encodeCbor(new Tag(96, tampered)));
+    await Deno.writeTextFile(
       join(directory, "tampered.cbor"),
-      await encodeCbor(new Tag(96, tampered)),
+      encodeFragments(await encodeCbor(wrapper)).join("\n"),
     );
     for (const outputFile of [false, true]) {
       const output = await cli(directory, [

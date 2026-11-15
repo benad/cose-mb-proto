@@ -16,7 +16,7 @@ CBOR-EDN uses h'...' for byte strings, "..." for text strings, {...} for maps, [
 
 The stored test keys below use standard base64. The final transport encoding uses unpadded base64url of the COSE_MB wrapper, not standard base64 of COSE_Encrypt. The payload ID 0, profile ID 2, and fragmentation ID Ex01 are three different identifiers.
 
-The current high-level functions in cose.ts and the CLI/web interface still encode and decode a standalone CBOR text string. They do not yet implement this payload-map/wrapper/fragmentation flow unchanged. This documentation example was generated and verified with the repository's CBOR codec and native WebCrypto using the profile's construction, not by claiming the older high-level round-trip accepts the new map.
+The CLI and web interface implement this payload-map/wrapper/fragmentation flow through the shared encryptTextMessage and decryptTextMessage functions in message.ts. The complete published example is verified by both shared-transport and CLI tests. The underlying cryptography and CBOR validation remain in cose.ts.
 
 ## 1. Decode and validate the four supplied keys
 
