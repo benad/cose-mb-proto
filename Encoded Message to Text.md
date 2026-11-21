@@ -1,8 +1,8 @@
 # Encoded Message to Text
 
-Document version ID: 20261115-2
+Document version ID: 20261121
 
-This defined a process to encode a `COSE_MB` object into plain text, and possibly break it into fragments.
+This defines a process to encode a `COSE_MB` object into plain text, and possibly break it into fragments.
 
 Each fragment has two parts:
 1. The header. Newline characters (`\n` and `\r`) cannot be used in the header.
