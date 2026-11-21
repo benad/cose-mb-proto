@@ -440,24 +440,34 @@ export function decodeFragments(input: string): Uint8Array {
   return decoded;
 }
 
-async function encodeProfile(
+export async function encodeProfileBytes(
   object: Uint8Array,
   id: number,
-  options: EncodingOptions,
-): Promise<string[]> {
-  return encodeFragments(
-    await encodeCbor(new Map<number, unknown>([[0, object], [1, id]])),
-    options,
+): Promise<Uint8Array> {
+  return await encodeCbor(
+    new Map<number, unknown>([[0, object], [1, id]]),
   );
 }
 
-function decodeProfile(fragments: string, id: number): Uint8Array {
-  const wrapper = decodeCbor(decodeFragments(fragments));
+export function decodeProfileBytes(bytes: Uint8Array, id: number): Uint8Array {
+  const wrapper = decodeCbor(bytes);
   if (
     !(wrapper instanceof Map) || wrapper.size !== 2 ||
     wrapper.get(1) !== id || !(wrapper.get(0) instanceof Uint8Array)
   ) throw new Error(`Expected a COSE_MB wrapper with profile ID ${id}`);
   return new Uint8Array(wrapper.get(0));
+}
+
+async function encodeProfile(
+  object: Uint8Array,
+  id: number,
+  options: EncodingOptions,
+): Promise<string[]> {
+  return encodeFragments(await encodeProfileBytes(object, id), options);
+}
+
+function decodeProfile(fragments: string, id: number): Uint8Array {
+  return decodeProfileBytes(decodeFragments(fragments), id);
 }
 
 export function normalizePublicKey(input: Uint8Array): Uint8Array {
@@ -479,14 +489,18 @@ export async function exportPublicKeyMessage(
   return await encodeProfile(await exportPublicCoseKey(privateKey), 1, options);
 }
 
-export async function encryptTextMessage(
+export async function exportPublicKeyProfile(
+  privateKey: Uint8Array,
+): Promise<Uint8Array> {
+  return await encodeProfileBytes(await exportPublicCoseKey(privateKey), 1);
+}
+
+export async function encryptMessageProfile(
   data: string,
   senderPrivate: Uint8Array,
   recipientPublic: Uint8Array,
   options: MessageOptions = {},
-): Promise<string[]> {
-  // Validate transport options before expensive cryptography.
-  optionalHeaders(empty, options);
+): Promise<Uint8Array> {
   const payload = await encodePayload({
     data,
     timestamp: Math.floor(Date.now() / 1000),
@@ -498,7 +512,35 @@ export async function encryptTextMessage(
     senderPrivate,
     normalizePublicKey(recipientPublic),
   );
-  return await encodeProfile(encrypted, 2, options);
+  return await encodeProfileBytes(encrypted, 2);
+}
+
+export async function encryptTextMessage(
+  data: string,
+  senderPrivate: Uint8Array,
+  recipientPublic: Uint8Array,
+  options: MessageOptions = {},
+): Promise<string[]> {
+  // Validate transport options before expensive cryptography.
+  optionalHeaders(empty, options);
+  return encodeFragments(
+    await encryptMessageProfile(data, senderPrivate, recipientPublic, options),
+    options,
+  );
+}
+
+export async function decryptMessageProfile(
+  wrapper: Uint8Array,
+  recipientPrivate: Uint8Array,
+  senderPublic: Uint8Array,
+): Promise<PlaintextPayload> {
+  return await decodePayload(
+    await decryptPayloadBytes(
+      decodeProfileBytes(wrapper, 2),
+      recipientPrivate,
+      normalizePublicKey(senderPublic),
+    ),
+  );
 }
 
 export async function decryptTextMessage(
@@ -506,12 +548,10 @@ export async function decryptTextMessage(
   recipientPrivate: Uint8Array,
   senderPublic: Uint8Array,
 ): Promise<PlaintextPayload> {
-  return await decodePayload(
-    await decryptPayloadBytes(
-      decodeProfile(fragments, 2),
-      recipientPrivate,
-      normalizePublicKey(senderPublic),
-    ),
+  return await decryptMessageProfile(
+    decodeFragments(fragments),
+    recipientPrivate,
+    senderPublic,
   );
 }
 

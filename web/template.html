@@ -19,6 +19,9 @@
     label { display: block; margin-block: 1rem .5rem; }
     footer { margin-block-start: 2rem; }
     dialog { max-width: 32rem; }
+    .aztec-preview { display: block; max-width: 100%; height: auto; image-rendering: pixelated; }
+    .image-input-status { min-height: 1.5rem; }
+    .image-drop-active { outline: .2rem solid #1677ff; outline-offset: .15rem; }
   </style>
 </head>
 <body>
@@ -61,6 +64,11 @@
           <option value="cose">Raw COSE_Key (base64)</option>
           <option value="jwk">Raw JWK JSON</option>
         </select>
+        <label for="export-output-format">Profile-1 transport</label>
+        <select id="export-output-format">
+          <option value="text" selected>C1 text fragments</option>
+          <option value="aztec">Aztec PNG</option>
+        </select>
         <fieldset id="export-transport">
           <legend>Profile-1 text encoding</legend>
           <label for="export-subject">Optional header subject (1-18 ASCII characters)</label>
@@ -96,24 +104,38 @@
         <textarea id="encrypt-private" data-private required rows="5" spellcheck="false"></textarea>
         <label for="encrypt-recipient">Recipient's public key: profile-1 fragments (preferred), base64 COSE_Key or JWK JSON</label>
         <textarea id="encrypt-recipient" required rows="4" spellcheck="false"></textarea>
-        <label for="encrypt-subject">Optional header subject (1-18 ASCII characters; not authenticated)</label>
-        <input id="encrypt-subject" type="text" maxlength="18" spellcheck="false">
-        <label><input id="encrypt-crc32" type="checkbox"> Add CRC32 header (detects accidental corruption)</label>
+        <label for="encrypt-recipient-image">Or load, paste, or drop a profile-1 Aztec image</label>
+        <input id="encrypt-recipient-image" data-aztec-image="encrypt-recipient" type="file" accept="image/*">
+        <p id="encrypt-recipient-image-status" class="image-input-status" role="status"></p>
+        <label for="encrypt-output-format">Encrypted-message transport</label>
+        <select id="encrypt-output-format">
+          <option value="text" selected>C1 text fragments</option>
+          <option value="aztec">Aztec PNG</option>
+        </select>
+        <fieldset data-c1-transport>
+          <legend>C1 header options</legend>
+          <label for="encrypt-subject">Optional header subject (1-18 ASCII characters; not authenticated)</label>
+          <input id="encrypt-subject" type="text" maxlength="18" spellcheck="false">
+          <label><input id="encrypt-crc32" type="checkbox"> Add CRC32 header (detects accidental corruption)</label>
+        </fieldset>
         <label for="encrypt-reply-epoch">Optional reply-to epoch seconds (both reply fields are required together)</label>
         <input id="encrypt-reply-epoch" type="text" inputmode="numeric">
         <label for="encrypt-reply-id">Optional reply-to message ID</label>
         <input id="encrypt-reply-id" type="text" inputmode="numeric">
-        <label for="encrypt-preset">Fragment size preset (including headers)</label>
-        <select id="encrypt-preset">
-          <option value="280" selected>X (280)</option>
-          <option value="500-threads">Threads (500)</option>
-          <option value="300">Bluesky (300)</option>
-          <option value="500-mastodon">Mastodon (500)</option>
-          <option value="0">Unlimited (0)</option>
-          <option value="custom">Custom</option>
-        </select>
-        <label for="encrypt-fragment-size">Maximum characters per fragment (0 means unlimited)</label>
-        <input id="encrypt-fragment-size" type="number" min="0" step="1" required value="280">
+        <fieldset data-c1-transport>
+          <legend>C1 fragment options</legend>
+          <label for="encrypt-preset">Fragment size preset (including headers)</label>
+          <select id="encrypt-preset">
+            <option value="280" selected>X (280)</option>
+            <option value="500-threads">Threads (500)</option>
+            <option value="300">Bluesky (300)</option>
+            <option value="500-mastodon">Mastodon (500)</option>
+            <option value="0">Unlimited (0)</option>
+            <option value="custom">Custom</option>
+          </select>
+          <label for="encrypt-fragment-size">Maximum characters per fragment (0 means unlimited)</label>
+          <input id="encrypt-fragment-size" type="number" min="0" step="1" required value="280">
+        </fieldset>
         <p>New messages include the current epoch timestamp and message ID 0. Zlib-wrapped Deflate is used automatically only when its data bytes are smaller. Compressed messages are limited to 10 MiB (10,485,760 bytes) of decompressed UTF-8 data.</p>
         <button type="submit">Encrypt and sign</button>
         <p role="status" id="encrypt-status" aria-live="polite"></p>
@@ -126,8 +148,14 @@
       <form id="decrypt" autocomplete="off">
         <label for="decrypt-message">C1 message fragments (any order; body line breaks are allowed)</label>
         <textarea id="decrypt-message" required rows="7" spellcheck="false"></textarea>
+        <label for="decrypt-message-image">Or load, paste, or drop an Aztec message image</label>
+        <input id="decrypt-message-image" data-aztec-image="decrypt-message" type="file" accept="image/*">
+        <p id="decrypt-message-image-status" class="image-input-status" role="status"></p>
         <label for="decrypt-sender">Sender's public key: profile-1 fragments (preferred), base64 COSE_Key or JWK JSON</label>
         <textarea id="decrypt-sender" required rows="4" spellcheck="false"></textarea>
+        <label for="decrypt-sender-image">Or load, paste, or drop a profile-1 Aztec image</label>
+        <input id="decrypt-sender-image" data-aztec-image="decrypt-sender" type="file" accept="image/*">
+        <p id="decrypt-sender-image-status" class="image-input-status" role="status"></p>
         <label for="decrypt-private">Recipient's private keypair: base64 COSE_Key or plain JWK JSON</label>
         <textarea id="decrypt-private" data-private required rows="5" spellcheck="false"></textarea>
         <button type="submit">Decrypt and verify</button>

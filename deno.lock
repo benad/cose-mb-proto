@@ -3,8 +3,11 @@
   "specifiers": {
     "npm:@knadh/oat@1.1.0": "1.1.0",
     "npm:@noble/curves@2.4.0": "2.4.0",
+    "npm:@sythos/js_barcode_universal@1.6.10": "1.6.10",
+    "npm:@zxing/library@0.23.0": "0.23.0",
     "npm:cbor2@2.4.1": "2.4.1",
     "npm:cborg@6.2.1": "6.2.1",
+    "npm:fast-png@8.0.0": "8.0.0",
     "npm:playwright@1.64.1": "1.64.1"
   },
   "npm": {
@@ -23,6 +26,21 @@
     "@noble/hashes@2.4.0": {
       "integrity": "sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA=="
     },
+    "@sythos/js_barcode_universal@1.6.10": {
+      "integrity": "sha512-0ycPNpFexmTLeipJnpCdXyJyo5Mwgfb+BGJHhm3JeSfPgbz2hvJy2UEjqPAAXFwODjhqof+E0CE2TnYZgF4fUA=="
+    },
+    "@zxing/library@0.23.0": {
+      "integrity": "sha512-6fkkoFwP8CHxl6ugnPsj74PLJgX2iRv5zczGAyt5OBzQgxFhuhF0NCEc4t4OvSr8xAv2MRLlI0Iu9ZGDZQ2urA==",
+      "dependencies": [
+        "ts-custom-error"
+      ],
+      "optionalDependencies": [
+        "@zxing/text-encoding"
+      ]
+    },
+    "@zxing/text-encoding@0.9.0": {
+      "integrity": "sha512-U/4aVJ2mxI0aDNI8Uq0wEhMgY+u4CNtEb0om3+y3+niDAsoTCOB33UF0sxpzqzdqXLqmvc+vZyAt4O8pPdfkwA=="
+    },
     "cbor2@2.4.1": {
       "integrity": "sha512-h4OqPnSvIEUNCxTNb9pwMZPKjhNKO9bkPwQJOR7d5oBIrZR/CO098atrLl4AkQmB1p3opCvo2UFt4fhRSWC/vQ==",
       "dependencies": [
@@ -32,6 +50,19 @@
     "cborg@6.2.1": {
       "integrity": "sha512-DwiF3Jd5RW6kJuTQMzQb/sdZD03utp15EcQNOMTvE/ZYCdDPzETsGOY5lj8imKxbsEuYvOzcMSiKLiT4C2/2Lw==",
       "bin": true
+    },
+    "fast-png@8.0.0": {
+      "integrity": "sha512-gCysNasJ8KEMgfdYIKd/wTDo6ENK1PWT0RJO7O+0pgmuHPw2O6tA1WvdxFRJoLf9V8yFYpG0FA1YgI8X97OhJA==",
+      "dependencies": [
+        "fflate",
+        "iobuffer"
+      ]
+    },
+    "fflate@0.8.3": {
+      "integrity": "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA=="
+    },
+    "iobuffer@6.0.1": {
+      "integrity": "sha512-SZWYkWNfjIXIBYSDpXDYIgshqtbOPsi4lviawAEceR1Kqk+sHDlcQjWrzNQsii80AyBY0q5c8HCTNjqo74ul+Q=="
     },
     "playwright-core@1.64.1": {
       "integrity": "sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9l21b6LfYosScPL6M3xxyDQ==",
@@ -43,14 +74,20 @@
         "playwright-core"
       ],
       "bin": true
+    },
+    "ts-custom-error@3.3.1": {
+      "integrity": "sha512-5OX1tzOjxWEgsr/YEUWSuPrQ00deKLh6D7OTWcvNHm12/7QPyRh8SYpyWvA4IZv8H/+GQWQEh/kwo95Q9OVW1A=="
     }
   },
   "workspace": {
     "dependencies": [
       "npm:@knadh/oat@1.1.0",
       "npm:@noble/curves@2.4.0",
+      "npm:@sythos/js_barcode_universal@1.6.10",
+      "npm:@zxing/library@0.23.0",
       "npm:cbor2@2.4.1",
       "npm:cborg@6.2.1",
+      "npm:fast-png@8.0.0",
       "npm:playwright@1.64.1"
     ]
   }

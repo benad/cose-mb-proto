@@ -68,6 +68,7 @@ export async function buildWeb(check = false): Promise<void> {
       ["@cto.af/wtf8", "LICENSE.md"],
       ["@noble/curves", "LICENSE"],
       ["@noble/hashes", "LICENSE"],
+      ["@sythos/js_barcode_universal", "LICENSE"],
     ]);
     const licenses: string[] = [];
     let css: string | undefined;

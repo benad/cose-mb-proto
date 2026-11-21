@@ -646,4 +646,180 @@ for (
       await Deno.remove(directory, { recursive: true });
     }
   });
+
+  Deno.test(`${name}: Aztec file paste drop preview and CLI interoperability`, async () => {
+    const directory = await Deno.makeTempDir({
+      prefix: `cose-${name}-aztec-`,
+    });
+    const browser = await engine.connect(endpoint);
+    const context = await browser.newContext({ acceptDownloads: true });
+    const page = await context.newPage();
+    const path = (name: string) => join(directory, name);
+    const cli = async (args: string[]) => {
+      const result = await new Deno.Command("deno", {
+        args: [
+          "run",
+          `--allow-read=${directory}`,
+          `--allow-write=${directory}`,
+          main,
+          ...args,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert(result.success, new TextDecoder().decode(result.stderr));
+      return new TextDecoder().decode(result.stdout);
+    };
+    const dispatchImage = async (
+      selector: string,
+      imagePath: string,
+      eventType: "paste" | "drop",
+    ) => {
+      const bytes = [...await Deno.readFile(imagePath)];
+      await page.locator(selector).evaluate((target, args) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(
+          new File([Uint8Array.from(args.bytes)], args.name, {
+            type: "image/png",
+          }),
+        );
+        if (args.type === "paste") {
+          const event = new Event("paste", {
+            bubbles: true,
+            cancelable: true,
+          });
+          Object.defineProperty(event, "clipboardData", { value: transfer });
+          target.dispatchEvent(event);
+        } else {
+          target.dispatchEvent(
+            new DragEvent("drop", {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer: transfer,
+            }),
+          );
+        }
+      }, {
+        bytes,
+        type: eventType,
+        name: imagePath.split("/").at(-1) ?? "code.png",
+      });
+    };
+    try {
+      await context.setOffline(true);
+      await page.goto("file:///workspace/cose-mb.html");
+      await submit(page, "generate");
+      const alice = fromBase64(
+        await page.locator("#generated-private").inputValue(),
+      );
+      await Deno.writeFile(path("alice-private.cbor"), alice, { mode: 0o600 });
+
+      await tab(page, "export");
+      await page.locator("#export-output-format").selectOption("aztec");
+      assert(await page.locator("#export-transport").isHidden());
+      await submit(page, "export");
+      const publicPreview = page.locator("#public-output img.aztec-preview");
+      await publicPreview.waitFor();
+      const [publicDownload] = await Promise.all([
+        page.waitForEvent("download"),
+        page.locator("#public-output a[download]").click(),
+      ]);
+      assert.equal(
+        publicDownload.suggestedFilename(),
+        "cose-mb-public-key.png",
+      );
+      await publicDownload.saveAs(path("alice-public.png"));
+
+      await cli([
+        "generate",
+        "--private",
+        path("bob-private.cbor"),
+        "--public",
+        path("bob-public.png"),
+        "--output-format",
+        "aztec",
+      ]);
+      const bob = await Deno.readFile(path("bob-private.cbor"));
+      const bobBase64 = toBase64(bob);
+
+      await tab(page, "encrypt");
+      await page.locator("#encrypt-recipient-image").setInputFiles(
+        path("bob-public.png"),
+      );
+      await page.locator("#encrypt-recipient-image-status").filter({
+        hasText: "Aztec code loaded",
+      }).waitFor();
+      await page.locator("#encrypt-message").fill(
+        "Browser to CLI Aztec \u{1f30d}",
+      );
+      await page.locator("#encrypt-output-format").selectOption("aztec");
+      assert(
+        await page.locator("#encrypt [data-c1-transport]").first().isHidden(),
+      );
+      await submit(page, "encrypt");
+      await page.locator("#encrypted-output img.aztec-preview").waitFor();
+      const [messageDownload] = await Promise.all([
+        page.waitForEvent("download"),
+        page.locator("#encrypted-output a[download]").click(),
+      ]);
+      assert.equal(messageDownload.suggestedFilename(), "cose-mb-message.png");
+      await messageDownload.saveAs(path("message.png"));
+      const recovered = JSON.parse(
+        await cli([
+          "decrypt",
+          "--recipient-private",
+          path("bob-private.cbor"),
+          "--sender-public",
+          path("alice-public.png"),
+          "--in",
+          path("message.png"),
+          "--json",
+        ]),
+      );
+      assert.equal(recovered.data, "Browser to CLI Aztec \u{1f30d}");
+
+      await tab(page, "decrypt");
+      await page.locator("#decrypt-private").fill(bobBase64);
+      await dispatchImage(
+        "#decrypt-sender",
+        path("alice-public.png"),
+        "drop",
+      );
+      await page.locator("#decrypt-sender-image-status").filter({
+        hasText: "Aztec code loaded",
+      }).waitFor();
+      await dispatchImage("#decrypt-message", path("message.png"), "paste");
+      await page.locator("#decrypt-message-image-status").filter({
+        hasText: "Aztec code loaded",
+      }).waitFor();
+      await submit(page, "decrypt");
+      assert(
+        (await page.locator("#decrypted-output").textContent())?.includes(
+          "Message:\nBrowser to CLI Aztec \u{1f30d}",
+        ),
+      );
+
+      await page.locator("#clear-all").click();
+      assert.equal(
+        await page.locator("#encrypt-output-format").inputValue(),
+        "text",
+      );
+      assert.equal(
+        await page.locator("#export-output-format").inputValue(),
+        "text",
+      );
+      assert.equal(
+        await page.locator("#decrypt-message-image-status").textContent(),
+        "",
+      );
+      assert.equal(
+        await page.locator("#encrypted-output img").count(),
+        0,
+      );
+    } finally {
+      await context.close();
+      await browser.close();
+      await Deno.remove(directory, { recursive: true });
+    }
+  });
 }

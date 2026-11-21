@@ -5,7 +5,17 @@
     "cbor2": "npm:cbor2@2.4.1",
     "cbor2/sorts": "npm:cbor2@2.4.1/sorts",
     "@noble/curves/nist.js": "npm:@noble/curves@2.4.0/nist.js",
+    "@sythos/js_barcode_universal": "npm:@sythos/js_barcode_universal@1.6.10",
+    "@sythos/js_barcode_universal/aztec": "npm:@sythos/js_barcode_universal@1.6.10/aztec",
+    "@sythos/js_barcode_universal/image": "npm:@sythos/js_barcode_universal@1.6.10/image",
+    "@sythos/js_barcode_universal/render/png": "npm:@sythos/js_barcode_universal@1.6.10/render/png",
+    "fast-png": "npm:fast-png@8.0.0",
     "@knadh/oat": "npm:@knadh/oat@1.1.0",
-    "playwright": "npm:playwright@1.64.1"
+    "playwright": "npm:playwright@1.64.1",
+    "@zxing/library": "npm:@zxing/library@0.23.0",
+    "@zxing/AztecReader": "npm:@zxing/library@0.23.0/cjs/core/aztec/AztecReader.js",
+    "@zxing/BinaryBitmap": "npm:@zxing/library@0.23.0/cjs/core/BinaryBitmap.js",
+    "@zxing/HybridBinarizer": "npm:@zxing/library@0.23.0/cjs/core/common/HybridBinarizer.js",
+    "@zxing/RGBLuminanceSource": "npm:@zxing/library@0.23.0/cjs/core/RGBLuminanceSource.js"
   }
 }

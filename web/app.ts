@@ -1,4 +1,5 @@
 import "@knadh/oat";
+import { type AztecPng, encodeAztecPng } from "../aztec.ts";
 import {
   exportPublicCoseKey,
   fromBase64,
@@ -7,14 +8,19 @@ import {
   toBase64,
 } from "../cose.ts";
 import {
+  decodeProfileBytes,
+  decryptMessageProfile,
   decryptTextMessage,
   type EncodingOptions,
+  encryptMessageProfile,
   encryptTextMessage,
   exportPublicKeyMessage,
+  exportPublicKeyProfile,
   formatPayload,
   integer,
   normalizePublicKey,
 } from "../message.ts";
+import { decodeBrowserAztec } from "./image.ts";
 
 function element(id: string): HTMLElement {
   const found = document.getElementById(id);
@@ -71,6 +77,12 @@ function keyInput(id: string): Uint8Array<ArrayBuffer> {
 }
 
 function publicKeyInput(id: string): Uint8Array {
+  const loaded = loadedImages.get(id);
+  if (loaded) {
+    const key = decodeProfileBytes(loaded.bytes, 1);
+    keyToJwk(key, false);
+    return key;
+  }
   const value = textarea(id).value.trim();
   return normalizePublicKey(
     value.startsWith("C1;") ? new TextEncoder().encode(value) : keyInput(id),
@@ -92,6 +104,12 @@ const outputs: Record<string, string[]> = {
   decrypt: ["decrypted-output"],
 };
 const copyReady = new Set<string>();
+interface LoadedImage {
+  bytes: Uint8Array;
+  name: string;
+}
+const loadedImages = new Map<string, LoadedImage>();
+const imageLoadVersions = new Map<string, number>();
 let busy = false;
 
 function output(id: string, value: string, ready = true): void {
@@ -153,19 +171,35 @@ function controls(disabled: boolean): void {
   }
   updateCopyButtons();
   updateExportFormat();
+  updateEncryptTransport();
 }
 
 function updateExportFormat(): void {
   const raw = select("export-format").value !== "profile1";
+  const aztec = select("export-output-format").value === "aztec";
   const transport = element("export-transport");
   if (!(transport instanceof HTMLFieldSetElement)) {
     throw new Error("Expected export transport fieldset");
   }
-  transport.hidden = raw;
-  transport.disabled = raw || busy;
+  transport.hidden = raw || aztec;
+  transport.disabled = raw || aztec || busy;
+  select("export-output-format").hidden = raw;
+  select("export-output-format").disabled = raw || busy;
   element("export-cose-output").hidden =
     select("export-format").value !== "cose";
   element("export-jwk-output").hidden = select("export-format").value !== "jwk";
+}
+
+function updateEncryptTransport(): void {
+  const aztec = select("encrypt-output-format").value === "aztec";
+  for (
+    const transport of document.querySelectorAll<HTMLFieldSetElement>(
+      "#encrypt [data-c1-transport]",
+    )
+  ) {
+    transport.hidden = aztec;
+    transport.disabled = aztec || busy;
+  }
 }
 
 function renderFragments(
@@ -192,6 +226,81 @@ function renderFragments(
     copy.textContent = "Copy";
     element(containerId).append(label, box, copy);
     output(id, fragment);
+  }
+}
+
+function renderAztec(
+  containerId: string,
+  filename: string,
+  image: AztecPng,
+): void {
+  const preview = document.createElement("img");
+  preview.className = "aztec-preview";
+  preview.src = image.dataUrl;
+  preview.alt = "Encoded Aztec barcode";
+  preview.width = image.width;
+  preview.height = image.height;
+  const details = document.createElement("p");
+  details.textContent =
+    `${image.width} by ${image.height} pixels; ${image.bytes.length} bytes. Keep the surrounding quiet zone intact.`;
+  const download = document.createElement("a");
+  download.href = image.dataUrl;
+  download.download = filename;
+  download.textContent = "Download PNG";
+  element(containerId).append(preview, details, download);
+}
+
+function clearImageInput(id: string): void {
+  imageLoadVersions.set(id, (imageLoadVersions.get(id) ?? 0) + 1);
+  loadedImages.delete(id);
+  textarea(id).required = true;
+  element(`${id}-image-status`).textContent = "";
+  const picker = document.querySelector<HTMLInputElement>(
+    `[data-aztec-image="${id}"]`,
+  );
+  if (picker) picker.value = "";
+}
+
+function setImageInput(id: string, loaded: LoadedImage): void {
+  loadedImages.set(id, loaded);
+  textarea(id).value = "";
+  textarea(id).required = false;
+  element(`${id}-image-status`).textContent =
+    `${loaded.name}: Aztec code loaded.`;
+}
+
+function commandForInput(id: string): string {
+  const command = id.split("-")[0];
+  if (!["encrypt", "decrypt"].includes(command)) {
+    throw new Error(`Unsupported image input: ${id}`);
+  }
+  return command;
+}
+
+async function acceptImage(
+  id: string,
+  blob: File | Blob,
+  name: string,
+): Promise<void> {
+  const command = commandForInput(id);
+  if (busy) return;
+  clearImageInput(id);
+  const version = imageLoadVersions.get(id) ?? 0;
+  clearResult(command);
+  status(command, "Reading Aztec image...");
+  try {
+    const bytes = await decodeBrowserAztec(blob);
+    if (imageLoadVersions.get(id) !== version) return;
+    setImageInput(id, { bytes, name });
+    status(command, "Aztec image loaded.");
+  } catch (error) {
+    if (imageLoadVersions.get(id) !== version) return;
+    clearImageInput(id);
+    status(
+      command,
+      error instanceof Error ? error.message : "Unable to read Aztec image",
+      true,
+    );
   }
 }
 
@@ -258,6 +367,10 @@ function submit(command: string, action: () => Promise<void>): void {
       event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLSelectElement
     ) {
+      if (
+        event.target instanceof HTMLTextAreaElement &&
+        loadedImages.has(event.target.id)
+      ) clearImageInput(event.target.id);
       clearResult(command);
     }
   });
@@ -287,11 +400,19 @@ submit("export", async () => {
   const privateKey = keyInput("export-private");
   const format = select("export-format").value;
   if (format === "profile1") {
-    renderFragments(
-      "public-output",
-      "public",
-      await exportPublicKeyMessage(privateKey, encodingOptions("export")),
-    );
+    if (select("export-output-format").value === "aztec") {
+      renderAztec(
+        "public-output",
+        "cose-mb-public-key.png",
+        await encodeAztecPng(await exportPublicKeyProfile(privateKey)),
+      );
+    } else {
+      renderFragments(
+        "public-output",
+        "public",
+        await exportPublicKeyMessage(privateKey, encodingOptions("export")),
+      );
+    }
   } else {
     const key = await exportPublicCoseKey(privateKey);
     if (format === "cose") output("exported-public", toBase64(key));
@@ -307,30 +428,53 @@ submit("encrypt", async () => {
   if (Boolean(replyEpoch) !== Boolean(replyId)) {
     throw new Error("Specify both reply-to epoch and ID");
   }
-  const encrypted = await encryptTextMessage(
-    textarea("encrypt-message").value,
-    keyInput("encrypt-private"),
-    publicKeyInput("encrypt-recipient"),
-    {
+  const messageOptions = {
+    compression: "auto" as const,
+    replyTo: replyEpoch
+      ? {
+        timestamp: numeric("encrypt-reply-epoch"),
+        id: numeric("encrypt-reply-id"),
+      }
+      : undefined,
+  };
+  const message = textarea("encrypt-message").value;
+  const privateKey = keyInput("encrypt-private");
+  const recipient = publicKeyInput("encrypt-recipient");
+  if (select("encrypt-output-format").value === "aztec") {
+    renderAztec(
+      "encrypted-output",
+      "cose-mb-message.png",
+      await encodeAztecPng(
+        await encryptMessageProfile(
+          message,
+          privateKey,
+          recipient,
+          messageOptions,
+        ),
+      ),
+    );
+  } else {
+    const encrypted = await encryptTextMessage(message, privateKey, recipient, {
       ...encodingOptions("encrypt"),
-      compression: "auto",
-      replyTo: replyEpoch
-        ? {
-          timestamp: numeric("encrypt-reply-epoch"),
-          id: numeric("encrypt-reply-id"),
-        }
-        : undefined,
-    },
-  );
-  renderFragments("encrypted-output", "encrypted", encrypted);
+      ...messageOptions,
+    });
+    renderFragments("encrypted-output", "encrypted", encrypted);
+  }
 });
 
 submit("decrypt", async () => {
-  const message = await decryptTextMessage(
-    textarea("decrypt-message").value,
-    keyInput("decrypt-private"),
-    publicKeyInput("decrypt-sender"),
-  );
+  const loaded = loadedImages.get("decrypt-message");
+  const message = loaded
+    ? await decryptMessageProfile(
+      loaded.bytes,
+      keyInput("decrypt-private"),
+      publicKeyInput("decrypt-sender"),
+    )
+    : await decryptTextMessage(
+      textarea("decrypt-message").value,
+      keyInput("decrypt-private"),
+      publicKeyInput("decrypt-sender"),
+    );
   output("decrypted-output", formatPayload(message));
 });
 
@@ -356,7 +500,54 @@ select("export-format").addEventListener("change", () => {
   updateExportFormat();
   clearResult("export");
 });
+select("export-output-format").addEventListener("change", () => {
+  updateExportFormat();
+  clearResult("export");
+});
+select("encrypt-output-format").addEventListener("change", () => {
+  updateEncryptTransport();
+  clearResult("encrypt");
+});
+
+for (
+  const picker of document.querySelectorAll<HTMLInputElement>(
+    "[data-aztec-image]",
+  )
+) {
+  const id = picker.dataset.aztecImage;
+  if (!id) throw new Error("Aztec file input is missing its target");
+  picker.addEventListener("change", () => {
+    const file = picker.files?.[0];
+    if (file) void acceptImage(id, file, file.name);
+  });
+  const target = textarea(id);
+  target.addEventListener("dragover", (event) => {
+    if (!event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    target.classList.add("image-drop-active");
+  });
+  target.addEventListener("dragleave", () => {
+    target.classList.remove("image-drop-active");
+  });
+  target.addEventListener("drop", (event) => {
+    target.classList.remove("image-drop-active");
+    const file = event.dataTransfer?.files[0];
+    if (!file) return;
+    event.preventDefault();
+    void acceptImage(id, file, file.name);
+  });
+  target.addEventListener("paste", (event) => {
+    const item = Array.from(event.clipboardData?.items ?? []).find((item) =>
+      item.kind === "file" && item.type.startsWith("image/")
+    );
+    const file = item?.getAsFile();
+    if (!file) return;
+    event.preventDefault();
+    void acceptImage(id, file, file.name || "Pasted image");
+  });
+}
 updateExportFormat();
+updateEncryptTransport();
 
 for (const id of ["replace-cancel", "replace-confirm"]) {
   element(id).addEventListener("click", () => {
@@ -385,7 +576,17 @@ element("clear-all").addEventListener("click", () => {
     select(`${command}-preset`).value = "280";
   }
   select("export-format").value = "profile1";
+  select("export-output-format").value = "text";
+  select("encrypt-output-format").value = "text";
   updateExportFormat();
+  updateEncryptTransport();
+  for (
+    const id of [
+      "encrypt-recipient",
+      "decrypt-message",
+      "decrypt-sender",
+    ]
+  ) clearImageInput(id);
   for (const command of Object.keys(outputs)) clearResult(command);
   element("copy-status").textContent = "";
 });

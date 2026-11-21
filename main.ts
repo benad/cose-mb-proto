@@ -1,12 +1,19 @@
 import { exportPublicCoseKey, generateCoseKey, keyToJwk } from "./cose.ts";
+import { encodeAztecPng, isPng } from "./aztec.ts";
+import { decodeAztecPng } from "./aztec_png.ts";
 import {
+  decodeProfileBytes,
+  decryptMessageProfile,
   decryptTextMessage,
   type EncodingOptions,
+  encryptMessageProfile,
   encryptTextMessage,
   exportPublicKeyMessage,
+  exportPublicKeyProfile,
   formatPayload,
   integer,
   type MessageOptions,
+  normalizePublicKey,
 } from "./message.ts";
 export {
   decodeCbor,
@@ -25,11 +32,23 @@ const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const commands = {
   generate: {
     required: ["private", "public"],
-    optional: ["public-format", "subject", "crc32", "fragment-size"],
+    optional: [
+      "public-format",
+      "output-format",
+      "subject",
+      "crc32",
+      "fragment-size",
+    ],
   },
   "export-public": {
     required: ["private", "out"],
-    optional: ["public-format", "subject", "crc32", "fragment-size"],
+    optional: [
+      "public-format",
+      "output-format",
+      "subject",
+      "crc32",
+      "fragment-size",
+    ],
   },
   encrypt: {
     required: ["sender-private", "recipient-public", "out"],
@@ -42,6 +61,7 @@ const commands = {
       "reply-to-id",
       "fragment-size",
       "compression",
+      "output-format",
     ],
   },
   decrypt: {
@@ -51,19 +71,21 @@ const commands = {
 };
 
 const help = `Usage:
-  generate --private PATH --public PATH [--public-format profile1|cose|jwk]
-  export-public --private PATH --out PATH [--public-format profile1|cose|jwk]
-    Public exports in profile1 mode also accept --subject TEXT, --crc32, --fragment-size CHARACTERS.
-  encrypt --sender-private PATH --recipient-public PATH (--in TEXT_FILE | --text MESSAGE) --out FRAGMENTS_FILE
+  generate --private PATH --public PATH [--public-format profile1|cose|jwk] [--output-format text|aztec]
+  export-public --private PATH --out PATH [--public-format profile1|cose|jwk] [--output-format text|aztec]
+    C1 profile-1 exports also accept --subject TEXT, --crc32, --fragment-size CHARACTERS.
+  encrypt --sender-private PATH --recipient-public PATH (--in TEXT_FILE | --text MESSAGE) --out OUTPUT_FILE
     [--subject TEXT] [--crc32] [--reply-to-epoch SECONDS --reply-to-id INTEGER] [--fragment-size CHARACTERS]
-    [--compression off|deflate|auto]
-  decrypt --recipient-private PATH --sender-public PATH --in FRAGMENTS_FILE [--out TEXT_FILE] [--json]
+    [--compression off|deflate|auto] [--output-format text|aztec]
+  decrypt --recipient-private PATH --sender-public PATH --in INPUT_FILE [--out TEXT_FILE] [--json]
 
 Use --help for help. Existing output files are never overwritten.
 Public exports default to profile1 text. Raw COSE CBOR and JWK are explicit alternatives.
+Profile-1 public exports and encrypted messages accept --output-format text|aztec.
 Public inputs accept profile1 fragments, raw COSE_Key CBOR or JWK JSON.
+Aztec PNG inputs are detected automatically for public keys and encrypted messages.
 Private generation produces raw COSE_Key CBOR; private inputs may also be JWK JSON.
-Encryption emits profile-2 base64url text fragments, one per line.
+Encryption emits profile-2 base64url text fragments by default, one per line.
 Fragment size includes headers; default 0 emits one unlimited fragment.
 Messages carry current epoch seconds and integer ID 0.
 Compression defaults to auto: use zlib-wrapped Deflate only if its data bytes are smaller.
@@ -161,6 +183,17 @@ export async function main(args: string[] = Deno.args): Promise<void> {
     fragmentSize: options.has("fragment-size") ? numeric("fragment-size") : 0,
     ...(options.has("subject") ? { subject: option("subject") } : {}),
   });
+  const outputFormat = (): "text" | "aztec" => {
+    const format = options.get("output-format") ?? "text";
+    if (format !== "text" && format !== "aztec") {
+      throw new Error("--output-format must be text or aztec");
+    }
+    return format;
+  };
+  const publicKeyInput = (input: Uint8Array): Uint8Array =>
+    isPng(input)
+      ? decodeProfileBytes(decodeAztecPng(input), 1)
+      : normalizePublicKey(input);
   const publicOutput = async (privateKey: Uint8Array): Promise<Uint8Array> => {
     const format = options.get("public-format") ?? "profile1";
     if (!["profile1", "cose", "jwk"].includes(format)) {
@@ -173,6 +206,23 @@ export async function main(args: string[] = Deno.args): Promise<void> {
       throw new Error(
         "Public export transport options require --public-format profile1",
       );
+    }
+    if (outputFormat() === "aztec") {
+      if (format !== "profile1") {
+        throw new Error(
+          "--output-format aztec requires --public-format profile1",
+        );
+      }
+      if (
+        ["subject", "crc32", "fragment-size"].some((name) => options.has(name))
+      ) {
+        throw new Error(
+          "C1 header and fragment options do not apply to Aztec output",
+        );
+      }
+      return (await encodeAztecPng(
+        await exportPublicKeyProfile(privateKey),
+      )).bytes;
     }
     if (format === "profile1") {
       return new TextEncoder().encode(
@@ -241,26 +291,66 @@ export async function main(args: string[] = Deno.args): Promise<void> {
           }
           : {}),
       };
-      const encrypted = await encryptTextMessage(
-        message,
-        await Deno.readFile(option("sender-private")),
+      const senderPrivate = await Deno.readFile(option("sender-private"));
+      const recipientPublic = publicKeyInput(
         await Deno.readFile(option("recipient-public")),
-        encoding,
       );
+      let encrypted: Uint8Array;
+      if (outputFormat() === "aztec") {
+        if (
+          ["subject", "crc32", "fragment-size"].some((name) =>
+            options.has(name)
+          )
+        ) {
+          throw new Error(
+            "C1 header and fragment options do not apply to Aztec output",
+          );
+        }
+        encrypted = (await encodeAztecPng(
+          await encryptMessageProfile(
+            message,
+            senderPrivate,
+            recipientPublic,
+            encoding,
+          ),
+        )).bytes;
+      } else {
+        encrypted = new TextEncoder().encode(
+          (await encryptTextMessage(
+            message,
+            senderPrivate,
+            recipientPublic,
+            encoding,
+          )).join("\n") + "\n",
+        );
+      }
       await writeNew(
         option("out"),
-        new TextEncoder().encode(encrypted.join("\n") + "\n"),
+        encrypted,
         0o644,
       );
       console.error("Saved signed and encrypted message.");
       break;
     }
     case "decrypt": {
-      const message = await decryptTextMessage(
-        textDecoder.decode(await Deno.readFile(option("in"))),
-        await Deno.readFile(option("recipient-private")),
+      const input = await Deno.readFile(option("in"));
+      const recipientPrivate = await Deno.readFile(
+        option("recipient-private"),
+      );
+      const senderPublic = publicKeyInput(
         await Deno.readFile(option("sender-public")),
       );
+      const message = isPng(input)
+        ? await decryptMessageProfile(
+          decodeAztecPng(input),
+          recipientPrivate,
+          senderPublic,
+        )
+        : await decryptTextMessage(
+          textDecoder.decode(input),
+          recipientPrivate,
+          senderPublic,
+        );
       const encoded = new TextEncoder().encode(
         options.has("json")
           ? JSON.stringify(message, null, 2)

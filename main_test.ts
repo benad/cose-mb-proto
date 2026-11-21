@@ -7,6 +7,8 @@ import { webcrypto } from "node:crypto";
 import { encode as independentEncode } from "cborg";
 import { Tag } from "cbor2";
 import { fromBase64, keyToJwk, toBase64 } from "./cose.ts";
+import { encodeAztecPng } from "./aztec.ts";
+import { decodeAztecPng } from "./aztec_png.ts";
 import { decodeFragments, encodeFragments } from "./message.ts";
 import {
   decodeCbor,
@@ -937,6 +939,175 @@ Deno.test("CLI round-trips files and text options without clobbering outputs or 
     );
     await assert.rejects(
       () => Deno.stat(join(directory, "invalid.cbor")),
+      Deno.errors.NotFound,
+    );
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+Deno.test("CLI round-trips profile-1 and profile-2 Aztec PNG files", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "cose-cli-aztec-" });
+  try {
+    for (const account of ["alice", "bob"]) {
+      await succeeds(directory, [
+        "generate",
+        "--private",
+        `${account}-private.cbor`,
+        "--public",
+        `${account}-public.png`,
+        "--output-format",
+        "aztec",
+      ]);
+      assert.deepEqual(
+        (await Deno.readFile(join(directory, `${account}-public.png`)))
+          .subarray(0, 8),
+        new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+      );
+    }
+    await succeeds(directory, [
+      "export-public",
+      "--private",
+      "alice-private.cbor",
+      "--out",
+      "alice-exported.png",
+      "--output-format=aztec",
+    ]);
+    await succeeds(directory, [
+      "encrypt",
+      "--sender-private",
+      "alice-private.cbor",
+      "--recipient-public",
+      "bob-public.png",
+      "--text",
+      "Aztec CLI \u{1f30d}",
+      "--reply-to-epoch",
+      "1794700800",
+      "--reply-to-id",
+      "0",
+      "--compression",
+      "off",
+      "--output-format",
+      "aztec",
+      "--out",
+      "message.png",
+    ]);
+    const decrypted = await succeeds(directory, [
+      "decrypt",
+      "--recipient-private",
+      "bob-private.cbor",
+      "--sender-public",
+      "alice-exported.png",
+      "--in",
+      "message.png",
+      "--json",
+    ]);
+    assert.deepEqual(
+      JSON.parse(new TextDecoder().decode(decrypted.stdout)),
+      {
+        data: "Aztec CLI \u{1f30d}",
+        timestamp: JSON.parse(
+          new TextDecoder().decode(decrypted.stdout),
+        ).timestamp,
+        id: 0,
+        reply_to: { timestamp: 1794700800, id: 0 },
+      },
+    );
+    if (Deno.build.os !== "windows") {
+      for (const path of ["alice-public.png", "message.png"]) {
+        assert.equal(
+          (await Deno.stat(join(directory, path))).mode! & 0o777,
+          0o644,
+        );
+      }
+    }
+
+    const replacement = await cli(directory, [
+      "encrypt",
+      "--sender-private",
+      "alice-private.cbor",
+      "--recipient-public",
+      "bob-public.png",
+      "--text",
+      "replacement",
+      "--output-format",
+      "aztec",
+      "--out",
+      "message.png",
+    ]);
+    assert.notEqual(replacement.code, 0);
+    assert.equal(replacement.stdout.length, 0);
+
+    for (
+      const args of [
+        [
+          "export-public",
+          "--private",
+          "alice-private.cbor",
+          "--out",
+          "raw.png",
+          "--public-format",
+          "cose",
+          "--output-format",
+          "aztec",
+        ],
+        [
+          "export-public",
+          "--private",
+          "alice-private.cbor",
+          "--out",
+          "header.png",
+          "--output-format",
+          "aztec",
+          "--subject",
+          "not-for-image",
+        ],
+        [
+          "encrypt",
+          "--sender-private",
+          "alice-private.cbor",
+          "--recipient-public",
+          "bob-public.png",
+          "--text",
+          "headers",
+          "--output-format",
+          "aztec",
+          "--fragment-size",
+          "280",
+          "--out",
+          "header-message.png",
+        ],
+      ]
+    ) assert.notEqual((await cli(directory, args)).code, 0);
+
+    const wrapper = keyMap(
+      decodeAztecPng(await Deno.readFile(join(directory, "message.png"))),
+    );
+    const encrypted = byteString(wrapper.get(0));
+    const tampered = array(encrypted, 96, 4);
+    const ciphertext = byteString(tampered[2]);
+    ciphertext[0] ^= 1;
+    tampered[2] = ciphertext;
+    wrapper.set(0, await encodeCbor(new Tag(96, tampered)));
+    await Deno.writeFile(
+      join(directory, "tampered.png"),
+      (await encodeAztecPng(await encodeCbor(wrapper))).bytes,
+    );
+    const failed = await cli(directory, [
+      "decrypt",
+      "--recipient-private",
+      "bob-private.cbor",
+      "--sender-public",
+      "alice-public.png",
+      "--in",
+      "tampered.png",
+      "--out",
+      "unverified.txt",
+    ]);
+    assert.notEqual(failed.code, 0);
+    assert.equal(failed.stdout.length, 0);
+    await assert.rejects(
+      () => Deno.stat(join(directory, "unverified.txt")),
       Deno.errors.NotFound,
     );
   } finally {
