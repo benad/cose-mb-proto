@@ -58,7 +58,20 @@ export function validateImageDimensions(width: number, height: number): void {
 
 export function aztecMatrix(bytes: Uint8Array) {
   if (!bytes.length) throw new Error("Cannot encode an empty COSE_MB message");
-  return encodeAztec(bytes, { eccPercent: aztecEccPercent });
+  try {
+    return encodeAztec(bytes, { eccPercent: aztecEccPercent });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("payload does not fit")
+    ) {
+      throw new Error(
+        `COSE_MB payload (${bytes.length} bytes) does not fit the maximum 32-layer Aztec symbol at ${aztecEccPercent}% requested ECC (16,200 data bits after compaction and bit stuffing)`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 
 export function aztecImageData(bytes: Uint8Array): RgbaImage {
