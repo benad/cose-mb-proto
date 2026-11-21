@@ -1,5 +1,7 @@
 # COSE-MB: COSE for Microblogging - Prototype
 
+[![Web page build status](https://github.com/benad/cose-mb-proto/actions/workflows/deploy-pages.yml/badge.svg?branch=main)](https://github.com/benad/cose-mb-proto/actions/workflows/deploy-pages.yml)
+
 License: [MIT license](COPYING)
 
 Author: Benoit Nadeau, with assistance from GitHub Copilot
@@ -7,6 +9,8 @@ Author: Benoit Nadeau, with assistance from GitHub Copilot
 Copilot models used: GPT 6.1 Sol, MAI Code 2, GPT-6.2 Sol
 
 This is a prototype for the COSE-MB specifications. It allows exchanging encrypted messages over any microblogging platform.
+
+**[Try it now!](https://benad.github.io/cose-mb-proto/)**
 
 ## Building
 
