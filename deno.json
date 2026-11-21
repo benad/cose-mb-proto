@@ -9,15 +9,13 @@
   },
   "importMap": "./imports.json",
   "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "esnext", "deno.ns"],
+    "types": ["./tests/browser/browser_types.d.ts"],
     "strict": true
   },
   "fmt": {
     "exclude": [
-      "COSE-MB Messages.md",
-      "Encrypted Message Payload.md",
-      "Encoded Message to Text.md",
-      "Public Key Message Profile.md",
-      "Singe-Recipient Encrypted Message Profile.md",
+      "**/*.md",
       "out/",
       "web/template.html"
     ],
