@@ -31,6 +31,7 @@ jobs:
           deno-version: 2.9.7
 
       - name: Configure Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/configure-pages@v5
 
       - name: Build web page
