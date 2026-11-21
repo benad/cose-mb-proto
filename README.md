@@ -32,6 +32,7 @@ Run `out/cose-mb --help` or open `out/cose-mb.html` in a browser.
 - Specifications: [COSE-MB messages](COSE-MB%20Messages.md) · [Public keys](Public%20Key%20Message%20Profile.md) · [Single-recipient encryption](Singe-Recipient%20Encrypted%20Message%20Profile.md) · [Encrypted payload](Encrypted%20Message%20Payload.md)
 - Transport: [C1 text](Encoded%20Message%20to%20Text.md) · [Aztec images](Encoded%20Message%20to%20Image.md)
 - [Worked encryption example](Single-Recipient%20Encrypted%20Message%20Example.md)
+- [Beyond the Prototype](Beyond%20the%20Prototype.md)
 
 ## Security
 
