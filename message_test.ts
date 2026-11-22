@@ -23,9 +23,11 @@ import {
   exportPublicKeyMessage,
   formatPayload,
   fromBase64Url,
+  fromZ85,
   maxDecompressedBytes,
   normalizePublicKey,
   toBase64Url,
+  toZ85,
 } from "./message.ts";
 
 Deno.test("payload maps preserve UTF-8 text and authenticated optional metadata", async () => {
@@ -206,6 +208,114 @@ Deno.test("canonical base64url and CRC32 cover entire binary messages", () => {
   for (const invalid of ["", "a", "AA=", "AA+", "AA/", "AB", "AAB"]) {
     assert.throws(() => fromBase64Url(invalid));
   }
+});
+
+Deno.test("Z85 uses the RFC 32 alphabet and strict four-byte blocks", () => {
+  const vector = Uint8Array.from([
+    0x86,
+    0x4f,
+    0xd2,
+    0x6f,
+    0xb5,
+    0x59,
+    0xf7,
+    0x5b,
+  ]);
+  assert.equal(toZ85(vector), "HelloWorld");
+  assert.deepEqual(fromZ85("HelloWorld"), vector);
+  assert(!Array.from(toZ85(new Uint8Array(4))).includes(";"));
+  assert.throws(() => toZ85(new Uint8Array(3)), /divisible/);
+  assert.throws(() => fromZ85("HelloWorl"), /divisible/);
+  assert.throws(() => fromZ85("Hell_World"), /character/);
+});
+
+Deno.test("C1 supports base64url, Z85 and Base2048 with consistent E headers", async () => {
+  const sample = Uint8Array.from([1, 2, 4, 8, 16, 32, 64, 128]);
+  const sampleFragment = encodeFragments(sample, { encoding: 2 })[0];
+  assert.equal(
+    sampleFragment.slice(sampleFragment.indexOf(";;") + 2),
+    "GƸOʜeҩ",
+  );
+  assert.deepEqual(decodeFragments(sampleFragment), sample);
+  for (let length = 0; length <= 20; length++) {
+    const bytes = await encodeCbor(
+      new Map<number, unknown>([
+        [0, Uint8Array.from({ length }, (_, index) => index + length)],
+        [1, 1],
+      ]),
+    );
+    for (const encoding of [0, 1, 2] as const) {
+      const fragments = encodeFragments(bytes, {
+        encoding,
+        fragmentSize: 50,
+        crc32: true,
+      });
+      assert(fragments.every((fragment) => Array.from(fragment).length <= 50));
+      assert(fragments.every((fragment) => {
+        const header = fragment.slice(0, fragment.indexOf(";;") + 2);
+        return encoding === 0
+          ? !header.includes("E=")
+          : header.includes(`E=${encoding};`);
+      }));
+      const shuffled = fragments.reverse().map((fragment) => {
+        const end = fragment.indexOf(";;") + 2;
+        return fragment.slice(0, end) +
+          fragment.slice(end).replace(/.{3}/gu, "$&\r\n");
+      }).join("\n\n");
+      assert.deepEqual(decodeFragments(shuffled), bytes);
+    }
+  }
+  assert.match(
+    encodeFragments(
+      await encodeCbor(
+        new Map<number, unknown>([[0, new Uint8Array()], [1, 1]]),
+      ),
+      { encoding: 2 },
+    )[0],
+    /^C1;E=2;;/,
+  );
+});
+
+Deno.test("C1 rejects invalid and inconsistent alternate encodings", async () => {
+  const bytes = await encodeCbor(
+    new Map<number, unknown>([[0, new Uint8Array([1, 2])], [1, 2]]),
+  );
+  const z85 = encodeFragments(bytes, { encoding: 1 })[0];
+  const base2048 = encodeFragments(bytes, { encoding: 2 })[0];
+  const z85Bytes = fromZ85(z85.slice(z85.indexOf(";;") + 2));
+  assert(z85Bytes.length > bytes.length);
+  const nonzeroPadding = z85Bytes.slice();
+  nonzeroPadding[nonzeroPadding.length - 1] = 1;
+  const excessPadding = Uint8Array.from([...z85Bytes, 0, 0, 0, 0]);
+  assert.match(z85, /^C1;E=1;;/);
+  assert.match(base2048, /^C1;E=2;;/);
+  for (
+    const input of [
+      "C1;E=3;;AA",
+      "C1;E=x;;AA",
+      z85.replace("C1;E=1;;", "C1;E=1;;_"),
+      "C1;E=1;;" + toZ85(nonzeroPadding),
+      "C1;E=1;;" + toZ85(excessPadding),
+      base2048.replace("C1;E=2;;", "C1;E=2;;_"),
+      [
+        "C1;P=1/2;I=Ex01;E=1;;" + z85.slice(z85.indexOf(";;") + 2),
+        "C1;P=2;I=Ex01;E=2;;" +
+        base2048.slice(base2048.indexOf(";;") + 2),
+      ].join("\n"),
+      [
+        "C1;P=1/2;I=Ex01;E=1;;" + z85.slice(z85.indexOf(";;") + 2),
+        "C1;P=2;I=Ex01;;A",
+      ].join("\n"),
+    ]
+  ) assert.throws(() => decodeFragments(input));
+  for (const encoding of [-1, 3, 1.5, NaN]) {
+    assert.throws(() =>
+      encodeFragments(bytes, { encoding: encoding as 0 | 1 | 2 })
+    );
+  }
+  assert.throws(
+    () => encodeFragments(new Uint8Array([0xff]), { encoding: 1 }),
+  );
 });
 
 Deno.test("fragmentation accounts for all headers, CRC and part-count digit transitions", () => {
@@ -623,6 +733,8 @@ Deno.test("CLI emits bounded lines, paired reply metadata and authenticated JSON
         ["--public-format", "unknown"],
         ["--public-format", "cose", "--crc32"],
         ["--public-format", "jwk", "--fragment-size", "0"],
+        ["--public-format", "cose", "--encoding", "1"],
+        ["--encoding", "3"],
         ["--fragment-size", "1"],
       ]
     ) {
@@ -694,6 +806,33 @@ Deno.test("CLI emits bounded lines, paired reply metadata and authenticated JSON
     assert.match(fragments[0], /^C1;P=1\/0[2-9];I=/);
     assert(fragments.slice(1).every((f) => /^C1;P=\d+;I=/.test(f)));
     assert(fragments[0].includes("S=Hello to you;C="));
+    for (const encoding of ["1", "2"]) {
+      const filename = `fragments-e${encoding}`;
+      const alternate = await run([
+        ...encrypt,
+        "--out",
+        filename,
+        "--encoding",
+        encoding,
+        "--fragment-size",
+        "140",
+      ]);
+      assert(alternate.success, alternate.error);
+      const encoded = await Deno.readTextFile(join(dir, filename));
+      assert.match(encoded, new RegExp(`^C1;.*E=${encoding};`));
+      const recovered = await run([
+        "decrypt",
+        "--recipient-private",
+        "receiver",
+        "--sender-public",
+        "sender-public",
+        "--in",
+        filename,
+        "--json",
+      ]);
+      assert(recovered.success, recovered.error);
+      assert.equal(JSON.parse(recovered.text).data, "hello world");
+    }
     const oversized = await run([
       "encrypt",
       "--sender-private",

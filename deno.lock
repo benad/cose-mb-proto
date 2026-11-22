@@ -5,6 +5,7 @@
     "npm:@noble/curves@2.4.0": "2.4.0",
     "npm:@sythos/js_barcode_universal@1.6.10": "1.6.10",
     "npm:@zxing/library@0.23.0": "0.23.0",
+    "npm:base2048@3.0.0": "3.0.0",
     "npm:cbor2@2.4.1": "2.4.1",
     "npm:cborg@6.2.1": "6.2.1",
     "npm:fast-png@8.0.0": "8.0.0",
@@ -40,6 +41,9 @@
     },
     "@zxing/text-encoding@0.9.0": {
       "integrity": "sha512-U/4aVJ2mxI0aDNI8Uq0wEhMgY+u4CNtEb0om3+y3+niDAsoTCOB33UF0sxpzqzdqXLqmvc+vZyAt4O8pPdfkwA=="
+    },
+    "base2048@3.0.0": {
+      "integrity": "sha512-/EWd5N2oLX8sec4iEyIgBStBUox7yynWIAzdQ3T6m6PmkmzSNiwUxKfm+8AUsEZoDfNfFxSPEUXE/bH0jllOUQ=="
     },
     "cbor2@2.4.1": {
       "integrity": "sha512-h4OqPnSvIEUNCxTNb9pwMZPKjhNKO9bkPwQJOR7d5oBIrZR/CO098atrLl4AkQmB1p3opCvo2UFt4fhRSWC/vQ==",
@@ -85,6 +89,7 @@
       "npm:@noble/curves@2.4.0",
       "npm:@sythos/js_barcode_universal@1.6.10",
       "npm:@zxing/library@0.23.0",
+      "npm:base2048@3.0.0",
       "npm:cbor2@2.4.1",
       "npm:cborg@6.2.1",
       "npm:fast-png@8.0.0",

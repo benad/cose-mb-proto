@@ -65,6 +65,7 @@ export async function buildWeb(check = false): Promise<void> {
     const embedded = new Map([
       ["@knadh/oat", "LICENSE"],
       ["cbor2", "LICENSE.md"],
+      ["base2048", "LICENSE.txt"],
       ["@cto.af/wtf8", "LICENSE.md"],
       ["@noble/curves", "LICENSE"],
       ["@noble/hashes", "LICENSE"],

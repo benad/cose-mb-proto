@@ -1063,6 +1063,17 @@ Deno.test("CLI round-trips profile-1 and profile-2 Aztec PNG files", async () =>
           "not-for-image",
         ],
         [
+          "export-public",
+          "--private",
+          "alice-private.cbor",
+          "--out",
+          "encoding.png",
+          "--output-format",
+          "aztec",
+          "--encoding",
+          "2",
+        ],
+        [
           "encrypt",
           "--sender-private",
           "alice-private.cbor",

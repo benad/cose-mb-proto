@@ -11,6 +11,7 @@ import {
   decodeCbor,
   encodeCbor,
   encryptPayloadBytes,
+  exportPublicCoseKey,
   fromBase64,
   keyToJwk,
   toBase64,
@@ -262,7 +263,7 @@ for (
       await page.locator("#export-crc32").check();
       await page.locator("#export-fragment-size").fill("80");
       await submit(page, "export");
-      const publicFragments = await page.locator("#public-output textarea")
+      let publicFragments = await page.locator("#public-output textarea")
         .evaluateAll(
           (elements) => elements.map((el) => (el as HTMLTextAreaElement).value),
         );
@@ -273,6 +274,35 @@ for (
       assert.match(publicFragments[0], /^C1;P=1\/0[2-9];I=/);
       assert(publicFragments.slice(1).every((f) => /^C1;P=\d+;I=/.test(f)));
       assert(publicFragments[0].includes("S=Hello to you;C="));
+      await page.locator("#export-subject").fill("");
+      await page.locator("#export-crc32").uncheck();
+      for (const encoding of ["1", "2"]) {
+        await page.locator("#export-encoding").selectOption(encoding);
+        await submit(page, "export");
+        const alternate = (await page.locator("#public-output textarea")
+          .evaluateAll(
+            (elements) =>
+              elements.map((element) => (element as HTMLTextAreaElement).value),
+          )).join("\n");
+        assert(
+          alternate.split("\n").every((fragment) =>
+            fragment.includes(`E=${encoding};`)
+          ),
+        );
+        assert.deepEqual(
+          normalizePublicKey(new TextEncoder().encode(alternate)),
+          await exportPublicCoseKey(alice),
+        );
+      }
+      await page.locator("#export-subject").fill("Hello to you");
+      await page.locator("#export-crc32").check();
+      await page.locator("#export-encoding").selectOption("0");
+      await submit(page, "export");
+      publicFragments = await page.locator("#public-output textarea")
+        .evaluateAll(
+          (elements) =>
+            elements.map((element) => (element as HTMLTextAreaElement).value),
+        );
       await page.evaluate(() =>
         Object.defineProperty(navigator, "clipboard", {
           configurable: true,
@@ -368,6 +398,36 @@ for (
         await page.locator("body").getAttribute("data-copied"),
         controlFragments[0],
       );
+      await page.locator("#encrypt-subject").fill("");
+      await page.locator("#encrypt-crc32").uncheck();
+      for (const encoding of ["1", "2"]) {
+        await page.locator("#encrypt-encoding").selectOption(encoding);
+        await submit(page, "encrypt");
+        const encoded = await fragmentOutput(page);
+        assert(
+          encoded.split("\n").every((fragment) =>
+            fragment.includes(`E=${encoding};`)
+          ),
+        );
+        await Deno.writeTextFile(path(`from-browser-e${encoding}`), encoded);
+        const recovered = JSON.parse(
+          await cli([
+            "decrypt",
+            "--json",
+            "--recipient-private",
+            path("bob-private.cbor"),
+            "--sender-public",
+            path("alice-public.cbor"),
+            "--in",
+            path(`from-browser-e${encoding}`),
+          ]),
+        );
+        assert.equal(recovered.data, "fragment controls");
+      }
+      await page.locator("#encrypt-subject").fill("Hello to you");
+      await page.locator("#encrypt-crc32").check();
+      await page.locator("#encrypt-encoding").selectOption("0");
+      await submit(page, "encrypt");
       await page.evaluate(() => {
         Object.defineProperty(navigator, "clipboard", {
           configurable: true,
@@ -629,6 +689,8 @@ for (
         "280",
       );
       assert.equal(await page.locator("#encrypt-subject").inputValue(), "");
+      assert.equal(await page.locator("#encrypt-encoding").inputValue(), "0");
+      assert.equal(await page.locator("#export-encoding").inputValue(), "0");
       assert(!(await page.locator("#encrypt-crc32").isChecked()));
       assert.equal(
         await page.locator("#export-format").inputValue(),

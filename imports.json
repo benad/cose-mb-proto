@@ -5,6 +5,7 @@
     "cbor2": "npm:cbor2@2.4.1",
     "cbor2/sorts": "npm:cbor2@2.4.1/sorts",
     "@noble/curves/nist.js": "npm:@noble/curves@2.4.0/nist.js",
+    "base2048": "npm:base2048@3.0.0",
     "@sythos/js_barcode_universal": "npm:@sythos/js_barcode_universal@1.6.10",
     "@sythos/js_barcode_universal/aztec": "npm:@sythos/js_barcode_universal@1.6.10/aztec",
     "@sythos/js_barcode_universal/image": "npm:@sythos/js_barcode_universal@1.6.10/image",

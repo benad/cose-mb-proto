@@ -38,6 +38,7 @@ const commands = {
       "subject",
       "crc32",
       "fragment-size",
+      "encoding",
     ],
   },
   "export-public": {
@@ -48,6 +49,7 @@ const commands = {
       "subject",
       "crc32",
       "fragment-size",
+      "encoding",
     ],
   },
   encrypt: {
@@ -62,6 +64,7 @@ const commands = {
       "fragment-size",
       "compression",
       "output-format",
+      "encoding",
     ],
   },
   decrypt: {
@@ -73,9 +76,9 @@ const commands = {
 const help = `Usage:
   generate --private PATH --public PATH [--public-format profile1|cose|jwk] [--output-format text|aztec]
   export-public --private PATH --out PATH [--public-format profile1|cose|jwk] [--output-format text|aztec]
-    C1 profile-1 exports also accept --subject TEXT, --crc32, --fragment-size CHARACTERS.
+    C1 profile-1 exports also accept --subject TEXT, --crc32, --fragment-size CHARACTERS, --encoding 0|1|2.
   encrypt --sender-private PATH --recipient-public PATH (--in TEXT_FILE | --text MESSAGE) --out OUTPUT_FILE
-    [--subject TEXT] [--crc32] [--reply-to-epoch SECONDS --reply-to-id INTEGER] [--fragment-size CHARACTERS]
+    [--subject TEXT] [--crc32] [--reply-to-epoch SECONDS --reply-to-id INTEGER] [--fragment-size CHARACTERS] [--encoding 0|1|2]
     [--compression off|deflate|auto] [--output-format text|aztec]
   decrypt --recipient-private PATH --sender-public PATH --in INPUT_FILE [--out TEXT_FILE] [--json]
 
@@ -85,7 +88,7 @@ Profile-1 public exports and encrypted messages accept --output-format text|azte
 Public inputs accept profile1 fragments, raw COSE_Key CBOR or JWK JSON.
 Aztec PNG inputs are detected automatically for public keys and encrypted messages.
 Private generation produces raw COSE_Key CBOR; private inputs may also be JWK JSON.
-Encryption emits profile-2 base64url text fragments by default, one per line.
+Text encoding defaults to 0 (base64url); 1 selects Z85 and 2 selects Base2048.
 Fragment size includes headers; default 0 emits one unlimited fragment.
 Messages carry current epoch seconds and integer ID 0.
 Compression defaults to auto: use zlib-wrapped Deflate only if its data bytes are smaller.
@@ -181,6 +184,7 @@ export async function main(args: string[] = Deno.args): Promise<void> {
   const encodingOptions = (): EncodingOptions => ({
     crc32: options.has("crc32"),
     fragmentSize: options.has("fragment-size") ? numeric("fragment-size") : 0,
+    encoding: options.has("encoding") ? numeric("encoding") as 0 | 1 | 2 : 0,
     ...(options.has("subject") ? { subject: option("subject") } : {}),
   });
   const outputFormat = (): "text" | "aztec" => {
@@ -201,7 +205,9 @@ export async function main(args: string[] = Deno.args): Promise<void> {
     }
     if (
       format !== "profile1" &&
-      ["subject", "crc32", "fragment-size"].some((name) => options.has(name))
+      ["subject", "crc32", "fragment-size", "encoding"].some((name) =>
+        options.has(name)
+      )
     ) {
       throw new Error(
         "Public export transport options require --public-format profile1",
@@ -214,7 +220,9 @@ export async function main(args: string[] = Deno.args): Promise<void> {
         );
       }
       if (
-        ["subject", "crc32", "fragment-size"].some((name) => options.has(name))
+        ["subject", "crc32", "fragment-size", "encoding"].some((name) =>
+          options.has(name)
+        )
       ) {
         throw new Error(
           "C1 header and fragment options do not apply to Aztec output",
@@ -298,7 +306,7 @@ export async function main(args: string[] = Deno.args): Promise<void> {
       let encrypted: Uint8Array;
       if (outputFormat() === "aztec") {
         if (
-          ["subject", "crc32", "fragment-size"].some((name) =>
+          ["subject", "crc32", "fragment-size", "encoding"].some((name) =>
             options.has(name)
           )
         ) {
