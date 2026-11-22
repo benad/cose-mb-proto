@@ -6,7 +6,7 @@ License: [MIT license](COPYING)
 
 Author: Benoit Nadeau, with assistance from GitHub Copilot
 
-Copilot models used: GPT 6.1 Sol, MAI Code 2, GPT-6.2 Sol
+Copilot models used: GPT 6.1 Sol, MAI Code 2, MAI Code 2 Flash, GPT-6.2 Sol
 
 This is a prototype for the COSE-MB specifications. It allows exchanging encrypted messages over any microblogging platform.
 
