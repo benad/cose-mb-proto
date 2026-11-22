@@ -90,10 +90,15 @@ function publicKeyInput(id: string): Uint8Array {
 }
 
 function encodingOptions(command: string): EncodingOptions {
+  const encoding = Number(select(`${command}-encoding`).value);
+  if (encoding !== 0 && encoding !== 1 && encoding !== 2) {
+    throw new Error("Encoding must be 0, 1 or 2");
+  }
   return {
     subject: input(`${command}-subject`).value || undefined,
     crc32: input(`${command}-crc32`).checked,
     fragmentSize: numeric(`${command}-fragment-size`),
+    encoding,
   };
 }
 
@@ -574,6 +579,7 @@ element("clear-all").addEventListener("click", () => {
     input(`${command}-crc32`).checked = false;
     input(`${command}-fragment-size`).value = "280";
     select(`${command}-preset`).value = "280";
+    select(`${command}-encoding`).value = "0";
   }
   select("export-format").value = "profile1";
   select("export-output-format").value = "text";

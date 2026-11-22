@@ -1,6 +1,6 @@
 # Encoded Message to Text
 
-Document version ID: 20261121
+Document version ID: 20261122
 
 This defines a process to encode a `COSE_MB` object into plain text, and possibly break it into fragments.
 
@@ -52,8 +52,8 @@ Supported headers (all optional unless otherwise mentioned):
     - "Encoding"
     - Value is one of the following:
         - `0`: `base64url`, but use `-` and `_` instead of `+` and `/`. Omit trailing `=`.
-        - `1`: **Reserved, not yet implemented** Z85 (possibly with custom alphabet)
-        - `2`: **Reserved, not yet implemented** [Base2048](https://github.com/qntm/base2048)
+        - `1`: [Z85](https://rfc.zeromq.org/spec/32/) of the CBOR message padded at the end with `0`–`3` zero bytes to a multiple of four; decoders remove only that zero suffix by requiring exactly one complete CBOR `COSE_MB` object.
+        - `2`: [Base2048](https://github.com/qntm/base2048).
     - If not specified, `0`, meaning `base64url`, is assumed.
 - `I`
     - "ID"
@@ -78,15 +78,29 @@ Supported headers (all optional unless otherwise mentioned):
 - Do so ordered by part number.
 - Require all parts to be specified exactly once.
 - Require consistent total/encoding.
+- Newline characters (`\n` and `\r`) are ignored in every body encoding; senders should omit them.
 
 ## `base64url` Encoding
 
 - Use `-` and `_` instead of `+` and `/`.
 - Omit trailing `=`.
-- Senders omit `\n` and `\r`; receivers remove `\n` and `\r` from fragment bodies before validation.
 - Encode the entire CBOR message first, then split the resulting text into fragments. On receipt, concatenate the fragment bodies before decoding; restore padding internally if the decoder requires it.
 - Individual fragments need not align to four-character boundaries.
 - Reject invalid characters, impossible lengths, and nonzero unused trailing bits.
+
+## Z85 Encoding
+
+- Append the minimum number of zero bytes (`0`-`3`) needed to make the CBOR message length divisible by four, then encode it with standard [Z85](https://rfc.zeromq.org/spec/32/).
+- Encode the entire padded message before splitting the resulting text into fragments. Individual fragments need not align to five-character boundaries.
+- A decoder first removes CR/LF characters, reassembles and Z85-decodes all fragments, then locates the end of the self-delimiting CBOR `COSE_MB` object. Accept only the uniquely valid prefix obtained by removing `0`-`3` trailing zero bytes.
+- Reject invalid alphabet characters or text lengths, nonzero trailing bytes, ambiguity, extra data after the CBOR item, and a decoded value that is not a complete `COSE_MB` object.
+- Use the standard Z85 alphabet without substitutions. In particular, `;` is not part of that alphabet.
+
+## Base2048 Encoding
+
+- Encode the complete CBOR message with standard [Base2048](https://github.com/qntm/base2048), then split the resulting Unicode text into fragments.
+- Fragment limits count Unicode code points (the Base2048 repertoire uses one code point per character).
+- Decoders must reject characters outside the Base2048 repertoire, secondary padding characters before the end, and invalid final padding bits.
 
 # CRC32 Header
 

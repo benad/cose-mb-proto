@@ -1,4 +1,5 @@
 import { Tag } from "cbor2";
+import { decode as decodeBase2048, encode as encodeBase2048 } from "base2048";
 import {
   decodeCbor,
   decryptPayloadBytes,
@@ -28,6 +29,7 @@ export interface EncodingOptions {
   subject?: string;
   crc32?: boolean;
   fragmentSize?: number;
+  encoding?: 0 | 1 | 2;
 }
 
 export interface MessageOptions extends EncodingOptions {
@@ -42,6 +44,11 @@ export const maxDecompressedBytes = 10 * 1024 * 1024;
 const empty = new Uint8Array();
 const defaultMime = "text/plain; charset=UTF-8";
 const decoder = new TextDecoder("utf-8", { fatal: true });
+const z85Alphabet =
+  "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#";
+const z85Values = new Map(
+  Array.from(z85Alphabet, (character, index) => [character, index]),
+);
 
 function ascii(value: string): boolean {
   return Array.from(value).every((character) => character.charCodeAt(0) <= 127);
@@ -261,6 +268,104 @@ export function fromBase64Url(text: string): Uint8Array {
   );
 }
 
+export function toZ85(bytes: Uint8Array): string {
+  if (bytes.length % 4 !== 0) {
+    throw new Error("Z85 input length must be divisible by four");
+  }
+  let text = "";
+  for (let offset = 0; offset < bytes.length; offset += 4) {
+    let value = bytes[offset] * 0x1000000 + bytes[offset + 1] * 0x10000 +
+      bytes[offset + 2] * 0x100 + bytes[offset + 3];
+    const chunk = new Array<string>(5);
+    for (let index = 4; index >= 0; index--) {
+      chunk[index] = z85Alphabet[value % 85];
+      value = Math.floor(value / 85);
+    }
+    text += chunk.join("");
+  }
+  return text;
+}
+
+export function fromZ85(text: string): Uint8Array {
+  if (text.length % 5 !== 0) {
+    throw new Error("Z85 text length must be divisible by five");
+  }
+  const bytes = new Uint8Array(text.length / 5 * 4);
+  let offset = 0;
+  for (let index = 0; index < text.length; index += 5) {
+    let value = 0;
+    for (const character of text.slice(index, index + 5)) {
+      const digit = z85Values.get(character);
+      if (digit === undefined) {
+        throw new Error("Invalid Z85 character");
+      }
+      value = value * 85 + digit;
+    }
+    if (value > 0xffffffff) throw new Error("Invalid Z85 block");
+    for (let shift = 24; shift >= 0; shift -= 8) {
+      bytes[offset++] = (value / 2 ** shift) >>> 0 & 0xff;
+    }
+  }
+  return bytes;
+}
+
+function encodingId(options: EncodingOptions): 0 | 1 | 2 {
+  const encoding = options.encoding ?? 0;
+  if (encoding !== 0 && encoding !== 1 && encoding !== 2) {
+    throw new Error("Encoding must be 0, 1 or 2");
+  }
+  return encoding;
+}
+
+function validateCoseMb(bytes: Uint8Array): void {
+  const value = decodeCbor(bytes);
+  if (
+    !(value instanceof Map) || value.size !== 2 ||
+    !(value.get(0) instanceof Uint8Array) ||
+    !Number.isSafeInteger(value.get(1))
+  ) {
+    throw new Error("Z85 data must contain a complete CBOR COSE_MB object");
+  }
+}
+
+function removeZ85Padding(bytes: Uint8Array): Uint8Array {
+  const candidates: Uint8Array[] = [];
+  for (let padding = 0; padding <= 3 && padding <= bytes.length; padding++) {
+    const length = bytes.length - padding;
+    if (padding && bytes.subarray(length).some((byte) => byte !== 0)) continue;
+    const candidate = bytes.subarray(0, length);
+    try {
+      validateCoseMb(candidate);
+      candidates.push(new Uint8Array(candidate));
+    } catch {
+      // Only the unpadded boundary is a complete CBOR item.
+    }
+  }
+  if (candidates.length !== 1) {
+    throw new Error("Invalid Z85 padding or CBOR message");
+  }
+  return candidates[0];
+}
+
+function encodeBody(bytes: Uint8Array, encoding: 0 | 1 | 2): string {
+  if (encoding === 0) return toBase64Url(bytes);
+  if (encoding === 2) return encodeBase2048(bytes);
+  validateCoseMb(bytes);
+  const padded = new Uint8Array(Math.ceil(bytes.length / 4) * 4);
+  padded.set(bytes);
+  return toZ85(padded);
+}
+
+function decodeBody(text: string, encoding: 0 | 1 | 2): Uint8Array {
+  if (encoding === 0) return fromBase64Url(text);
+  if (encoding === 1) return removeZ85Padding(fromZ85(text));
+  try {
+    return decodeBase2048(text);
+  } catch (error) {
+    throw new Error("Invalid Base2048 encoding", { cause: error });
+  }
+}
+
 export function crc32(bytes: Uint8Array): string {
   let crc = 0xffffffff;
   for (const byte of bytes) {
@@ -274,6 +379,8 @@ export function crc32(bytes: Uint8Array): string {
 
 function optionalHeaders(bytes: Uint8Array, options: EncodingOptions): string {
   let fields = "";
+  const encoding = encodingId(options);
+  if (encoding !== 0) fields += `E=${encoding};`;
   if (options.subject !== undefined) {
     if (
       !options.subject.length || options.subject.length > 18 ||
@@ -297,12 +404,17 @@ export function encodeFragments(
   if (!Number.isSafeInteger(size) || size < 0) {
     throw new Error("Fragment size must be a nonnegative safe integer");
   }
-  const text = toBase64Url(bytes);
+  const encoding = encodingId(options);
+  const text = encodeBody(bytes, encoding);
   if (!text.length) throw new Error("Cannot encode an empty CBOR message");
+  const characters = Array.from(text);
   const fields = optionalHeaders(bytes, options);
   const single = `C1;${fields};`;
   if (single.length > 50) throw new Error("Header exceeds 50 characters");
-  if (!size || single.length + text.length <= size) return [single + text];
+  if (!size || single.length + characters.length <= size) {
+    return [single + text];
+  }
+  const encodingField = encoding === 0 ? "" : `E=${encoding};`;
   const id = Array.from(
     crypto.getRandomValues(new Uint8Array(4)),
     (b) => b.toString(16).padStart(2, "0"),
@@ -310,7 +422,7 @@ export function encodeFragments(
   const header = (part: number, total: number) =>
     `C1;P=${
       part === 1 ? `1/${String(total).padStart(2, "0")}` : part
-    };I=${id};${part === 1 ? fields : ""};`;
+    };I=${id};${part === 1 ? fields : encodingField};`;
   let capacity = 0;
   let total = 0;
   for (let part = 1; part <= 99; part++) {
@@ -322,7 +434,7 @@ export function encodeFragments(
       throw new Error("Fragment size cannot fit headers and message data");
     }
     capacity += size - headerLength;
-    if (part >= 2 && capacity >= text.length) {
+    if (part >= 2 && capacity >= characters.length) {
       total = part;
       break;
     }
@@ -335,10 +447,10 @@ export function encodeFragments(
     // Leave at least one body character for every remaining part.
     const take = Math.min(
       size - prefix.length,
-      text.length - offset - (total - part),
+      characters.length - offset - (total - part),
     );
     if (take < 1) throw new Error("Fragment size cannot fit message data");
-    fragments.push(prefix + text.slice(offset, offset + take));
+    fragments.push(prefix + characters.slice(offset, offset + take).join(""));
     offset += take;
   }
   return fragments;
@@ -354,6 +466,7 @@ export function decodeFragments(input: string): Uint8Array {
   const declaredTotals: number[] = [];
   let expectedTotal: number | undefined;
   let expectedId: string | undefined;
+  let expectedEncoding: 0 | 1 | 2 | undefined;
   let firstChecksum: string | undefined;
   for (const piece of pieces) {
     const fragment = "C1;" + piece;
@@ -395,9 +508,15 @@ export function decodeFragments(input: string): Uint8Array {
     if (id !== undefined && !/^[a-zA-Z0-9]{4,8}$/.test(id)) {
       throw new Error("Invalid or missing fragment ID");
     }
-    if ((values.get("E") ?? "0") !== "0") {
-      throw new Error("Only base64url encoding 0 is supported");
+    const encodedId = values.get("E") ?? "0";
+    if (encodedId !== "0" && encodedId !== "1" && encodedId !== "2") {
+      throw new Error("Unsupported C1 encoding");
     }
+    const encoding = Number(encodedId) as 0 | 1 | 2;
+    if (expectedEncoding !== undefined && encoding !== expectedEncoding) {
+      throw new Error("Inconsistent fragment encoding");
+    }
+    expectedEncoding = encoding;
     const checksum = values.get("C");
     if (checksum !== undefined && !/^[0-9A-F]{8}$/.test(checksum)) {
       throw new Error("Invalid CRC32 header");
@@ -414,9 +533,7 @@ export function decodeFragments(input: string): Uint8Array {
       throw new Error("Each fragment part must occur exactly once");
     }
     const body = fragment.slice(end + 2).replace(/[\r\n]/g, "");
-    if (!/^[A-Za-z0-9_-]+$/.test(body)) {
-      throw new Error("Invalid fragment body");
-    }
+    if (!body) throw new Error("Invalid empty fragment body");
     parts.set(part, body);
   }
   if (expectedTotal === undefined) throw new Error("Missing first fragment");
@@ -433,7 +550,7 @@ export function decodeFragments(input: string): Uint8Array {
   const joined = Array.from(parts).sort(([a], [b]) => a - b).map(([, body]) =>
     body
   ).join("");
-  const decoded = fromBase64Url(joined);
+  const decoded = decodeBody(joined, expectedEncoding ?? 0);
   if (firstChecksum !== undefined && crc32(decoded) !== firstChecksum) {
     throw new Error("CRC32 checksum mismatch");
   }

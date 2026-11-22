@@ -27,7 +27,7 @@
 <body>
   <header>
     <h1>COSE microblogging prototype</h1>
-    <p>Single-recipient profile 2 with payload and text encoding version 20261115. Everything runs locally in this page; no server or network connection is needed.</p>
+    <p>Single-recipient profile 2 with payload and text encoding version 20261122. Everything runs locally in this page; no server or network connection is needed.</p>
     <p class="warning"><strong>Private keys are not encrypted.</strong> Anyone with a private keypair can sign as you and decrypt messages sent to you. Save it securely. Keys and plaintext are visible to your browser and any extensions with access to this page.</p>
     <noscript>JavaScript is required. No commands can run with JavaScript disabled.</noscript>
     <p id="availability" role="alert" hidden></p>
@@ -71,6 +71,12 @@
         </select>
         <fieldset id="export-transport">
           <legend>Profile-1 text encoding</legend>
+          <label for="export-encoding">Text encoding</label>
+          <select id="export-encoding">
+            <option value="0" selected>0: Base64url (default)</option>
+            <option value="1">1: Z85</option>
+            <option value="2">2: Base2048</option>
+          </select>
           <label for="export-subject">Optional header subject (1-18 ASCII characters)</label>
           <input id="export-subject" type="text" maxlength="18" spellcheck="false">
           <label><input id="export-crc32" type="checkbox"> Add CRC32 header</label>
@@ -114,6 +120,12 @@
         </select>
         <fieldset data-c1-transport>
           <legend>C1 header options</legend>
+          <label for="encrypt-encoding">Text encoding</label>
+          <select id="encrypt-encoding">
+            <option value="0" selected>0: Base64url (default)</option>
+            <option value="1">1: Z85</option>
+            <option value="2">2: Base2048</option>
+          </select>
           <label for="encrypt-subject">Optional header subject (1-18 ASCII characters; not authenticated)</label>
           <input id="encrypt-subject" type="text" maxlength="18" spellcheck="false">
           <label><input id="encrypt-crc32" type="checkbox"> Add CRC32 header (detects accidental corruption)</label>
@@ -139,7 +151,7 @@
         <p>New messages include the current epoch timestamp and message ID 0. Zlib-wrapped Deflate is used automatically only when its data bytes are smaller. Compressed messages are limited to 10 MiB (10,485,760 bytes) of decompressed UTF-8 data.</p>
         <button type="submit">Encrypt and sign</button>
         <p role="status" id="encrypt-status" aria-live="polite"></p>
-        <h3>Encrypted message fragments: base64url COSE_MB</h3>
+        <h3>Encoded COSE_MB message fragments</h3>
         <div id="encrypted-output"></div>
       </form>
     </section>
