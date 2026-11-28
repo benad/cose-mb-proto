@@ -34,6 +34,6 @@ Browser text inputs normalize line breaks to LF. Plaintext decrypted from a CLI 
 
 ## Development
 
-`web/template.html` and `web/app.ts` are the page sources. `deno task build:web` uses Deno's browser bundler and embeds pinned Oat styling and scripts. Build from the repository root and redeploy the generated HTML after changes; `out/` is Git-ignored. `deno task check:web` compares the artifact with a fresh build without overwriting it. Builds use the root lockfile in frozen mode. Development was validated with Deno 2.9.7; changes to its experimental browser bundler can affect the generated HTML.
+`web/template.html` and `web/app.ts` are the page sources. `deno task build:web` uses Deno's browser bundler and embeds pinned Oat styling and scripts. Build from the repository root and redeploy the generated HTML after changes; `out/` is Git-ignored. `deno task check:web` compares the artifact with a fresh build without overwriting it. Builds use the root lockfile in frozen mode. Development was validated with Deno 2.9.8; changes to its experimental browser bundler can affect the generated HTML.
 
 After building, run `deno task test:web` with a reachable Docker daemon. The tests use a pinned Playwright image to open the page from disk in offline Chromium, Firefox, and WebKit contexts. They cover CLI interchange, fragment and PNG handling, authentication failures, and browser interactions. Only the HTML is mounted read-only; the test control server listens on loopback and is not part of the application.
