@@ -111,6 +111,8 @@ async function independentlyOpen(
   const outer = array(encrypted, 96, 4);
   const recipient = asArray(asArray(outer[3])[0]);
   const ephemeralMap = asMap(asMap(recipient[1]).get(-1));
+  const y = ephemeralMap.get(-3);
+  assert(typeof y === "boolean");
   const privateKey = await webcrypto.subtle.importKey(
     "jwk",
     jwk(recipientPrivate),
@@ -119,8 +121,8 @@ async function independentlyOpen(
     ["deriveBits"],
   );
   const ephemeral = await webcrypto.subtle.importKey(
-    "jwk",
-    jwk(await encodeCbor(ephemeralMap)),
+    "raw",
+    Buffer.concat([Buffer.of(y ? 3 : 2), byteString(ephemeralMap.get(-2))]),
     { name: "ECDH", namedCurve: "P-256" },
     false,
     [],
@@ -508,6 +510,33 @@ Deno.test("each encryption uses fresh ephemeral keys and IVs", async () => {
   assert.notDeepEqual(epk(first), epk(second));
 });
 
+Deno.test("compressed epk accepts both parities but static keys still require full coordinates", async () => {
+  const alice = await generateCoseKey();
+  const bob = await generateCoseKey();
+  const alicePublic = await exportPublicCoseKey(alice);
+  const bobPublic = await exportPublicCoseKey(bob);
+  const full = await encryptMessage("either parity", alice, bobPublic, false);
+  const outer = array(full, 96, 4);
+  const epk = asMap(asMap(asArray(asArray(outer[3])[0])[1]).get(-1));
+  assert.equal(byteString(epk.get(-3)).length, 32);
+  assert.equal(await decryptMessage(full, bob, alicePublic), "either parity");
+
+  // Negating the point leaves the x coordinate of the ECDH shared point unchanged.
+  for (const parity of [false, true]) {
+    epk.set(-3, parity);
+    const compressed = await encodeCbor(new Tag(96, outer));
+    assert.equal(full.length - compressed.length, 33);
+    assert.equal(
+      await decryptMessage(compressed, bob, alicePublic),
+      "either parity",
+    );
+  }
+  const staticKey = keyMap(bobPublic);
+  staticKey.set(-3, true);
+  const compressedStatic = await encodeCbor(staticKey);
+  assert.throws(() => keyToJwk(compressedStatic, false), /COSE_Key y/);
+});
+
 Deno.test("original protected bytes are preserved and non-critical headers may be ignored", async () => {
   const alice = await generateCoseKey();
   const bob = await generateCoseKey();
@@ -584,6 +613,13 @@ Deno.test("tampered ciphertext, keys, and encryption structures are rejected", a
         -2,
         Buffer.alloc(31),
       ),
+    (value) =>
+      asMap(asMap(asArray(asArray(value[3])[0])[1]).get(-1)).set(
+        -2,
+        Buffer.alloc(32, 0xff),
+      ),
+    (value) =>
+      asMap(asMap(asArray(asArray(value[3])[0])[1]).get(-1)).set(-3, 1),
     (value) =>
       asMap(asMap(asArray(asArray(value[3])[0])[1]).get(-1)).set(
         -2,

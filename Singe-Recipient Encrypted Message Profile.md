@@ -199,7 +199,7 @@ For private keys, the scalar d MUST satisfy `1 <= d < n`, where n is the P-256 s
 
 For P-256, each of `x`, `y`, and `d`, when present, MUST be an unsigned big-endian integer encoded in exactly 32 bytes. Reject keys with shorter or longer values.
 
-COSE values MUST be byte strings. JWK values MUST decode from base64url to the same fixed-width byte strings. Compressed-point representations are not accepted by this profile.
+Static COSE key coordinates and scalars MUST be byte strings. JWK values MUST decode from base64url to the same fixed-width byte strings. Compressed points are allowed only for `epk` (Step 3.2).
 
 ---
 
@@ -436,7 +436,7 @@ Fresh ephemeral keys provide fresh per-message shared secrets, but this ephemera
 
 ## 3.2 Construct the Ephemeral COSE_Key
 
-The recipient must receive the ephemeral public key.
+The recipient must receive the ephemeral public key. Senders SHOULD use the compressed form by default, as defined in [RFC 9053, Section 7.1](https://www.rfc-editor.org/rfc/rfc9053.html#section-7.1): `x` is a 32-byte unsigned big-endian coordinate, and `y` is a CBOR boolean (`false` for even `y`, `true` for odd `y`). Senders MAY instead transmit the full 32-byte unsigned big-endian `y` coordinate. Receivers MUST accept both forms.
 
 CBOR-EDN:
 
@@ -451,11 +451,7 @@ CBOR-EDN:
          unsigned big-endian integer
          commonly called X /
 
-  -3: h'YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY'
-      / ephemeral public y coordinate
-         exactly 32 bytes
-         unsigned big-endian integer
-         commonly called Y /
+  -3: true  / compressed form: y is odd /
 }
 ```
 
@@ -562,11 +558,7 @@ CBOR-EDN:
              unsigned big-endian integer
              commonly called X /,
 
-      -3: h'YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY'
-          / y coordinate
-             exactly 32 bytes
-             unsigned big-endian integer
-             commonly called Y /
+      -3: true  / compressed form: y is odd /
      }
       / ephemeral public key
          header parameter: epk
@@ -671,7 +663,7 @@ CBOR-EDN:
               1: 2,
              -1: 1,
              -2: h'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-             -3: h'YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY'
+             -3: true
             }
             / epk: ephemeral public key only /
       },
@@ -715,10 +707,10 @@ The cryptographic protection layers for one recipient add approximately:
 | COSE_Encrypt framing | ~15 bytes |
 | AES-GCM IV | 12 bytes |
 | AES-GCM authentication tag | 16 bytes |
-| Ephemeral public key (P-256) | ~75 bytes |
-| **Total Overhead** | **~180-200 bytes** |
+| Ephemeral public key (P-256, compressed) | ~42 bytes |
+| **Total Overhead (compressed)** | **~150-170 bytes** |
 
-As a rule of thumb, the result is about 190 bytes larger than the payload.
+The boolean `y` saves 33 bytes in `epk` compared with the full coordinate.
 
 The exact size depends on:
 
@@ -857,7 +849,7 @@ Header parameter -1 in the single recipient's unprotected header:
       1: 2,
      -1: 1,
      -2: x,
-     -3: y
+     -3: true
     }
 ```
 
@@ -866,15 +858,11 @@ Validation:
 * `epk` MUST be a CBOR map.
 * `kty` MUST be the CBOR integer `2` (EC2).
 * `crv` MUST equal P-256.
-* `x` coordinate MUST exist.
-* `y` coordinate MUST exist.
-* `x` and `y` MUST be byte strings.
-* `x` length MUST equal 32 bytes.
-* `y` length MUST equal 32 bytes.
+* `x` MUST be a 32-byte CBOR byte string.
+* `y` MUST be either a CBOR boolean (compressed) or a 32-byte CBOR byte string (full coordinate).
 * `-4` (private scalar) MUST NOT be present.
 * `alg` MUST NOT be present.
-* The coordinates MUST represent a finite, valid P-256 point as specified
-  in Step 1.
+* The decoded coordinates MUST represent a finite, valid P-256 point as specified in Step 1. Reject a compressed point if `x` and the sign bit do not yield a valid point.
 
 ---
 
@@ -888,7 +876,7 @@ Validation:
 
 ## 4.8 Reconstruct the Sender's Ephemeral Public Key
 
-Convert `epk` to the implementation's internal public key representation using its P-256 curve and `x` and `y` coordinates. The result is `senderEphemeralPublicKey`.
+For compressed `epk`, recover the full `y` coordinate from `x` and the parity bit before using the point. Convert the validated point to the implementation's internal public key representation, `senderEphemeralPublicKey`.
 
 ---
 
@@ -1197,7 +1185,7 @@ Example:
     1: 2,
     -1: 1,
     -2: h'...',
-    -3: h'...'
+    -3: true
   }
 }
 ```
@@ -1209,7 +1197,7 @@ Where:
 | `1: 2` | EC2 key type |
 | `-1: 1` | P-256 curve |
 | `-2` | X coordinate |
-| `-3` | Y coordinate |
+| `-3` | Y parity (compressed) or full Y coordinate |
 
 ---
 
@@ -1480,6 +1468,7 @@ This profile imposes the following requirements:
 - COSE_Encrypt SHALL contain exactly one COSE_recipient.
 - The recipient unprotected header SHALL contain `alg: -25` and `epk`.
 - The ephemeral public key SHALL NOT contain private key material.
+- Receivers SHALL accept both compressed and full `epk` coordinates. Senders SHOULD use the compressed form.
 - The recipient protected header and ciphertext SHALL each be `h''`.
 - PartyUInfo and PartyVInfo SHALL each be `[null, null, null]`.
 - The complete KDF context SHALL be

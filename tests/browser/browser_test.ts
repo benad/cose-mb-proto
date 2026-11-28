@@ -46,6 +46,12 @@ function map(value: unknown): Map<unknown, unknown> {
   return value;
 }
 
+function ephemeralMap(outer: unknown[]): Map<unknown, unknown> {
+  const recipients = outer[3];
+  assert(Array.isArray(recipients) && Array.isArray(recipients[0]));
+  return map(map(recipients[0][1]).get(-1));
+}
+
 async function mutateEnvelope(
   encoded: string,
   mutate: (outer: unknown[]) => void,
@@ -69,8 +75,9 @@ async function badSignature(
 ): Promise<Uint8Array> {
   const envelope = decodeCbor(encrypted);
   const outer = tagged(envelope, 96);
-  assert(Array.isArray(outer[3]) && Array.isArray(outer[3][0]));
-  const epk = map(outer[3][0][1]).get(-1);
+  const epk = ephemeralMap(outer);
+  const y = epk.get(-3);
+  const x = bytes(epk.get(-2));
   const recipient = await webcrypto.subtle.importKey(
     "jwk",
     keyToJwk(privateKey, true),
@@ -79,8 +86,10 @@ async function badSignature(
     ["deriveBits"],
   );
   const ephemeral = await webcrypto.subtle.importKey(
-    "jwk",
-    keyToJwk(await encodeCbor(epk), false),
+    "raw",
+    typeof y === "boolean"
+      ? Buffer.concat([Buffer.of(y ? 3 : 2), x])
+      : Buffer.concat([Buffer.of(4), x, bytes(y)]),
     { name: "ECDH", namedCurve: "P-256" },
     false,
     [],
@@ -509,6 +518,9 @@ for (
         const browserText = await page.locator("#encrypt-message").inputValue();
         await submit(page, "encrypt");
         encrypted = await fragmentOutput(page);
+        const wrapper = map(decodeCbor(decodeFragments(encrypted)));
+        const outer = tagged(decodeCbor(bytes(wrapper.get(0))), 96);
+        assert.equal(typeof ephemeralMap(outer).get(-3), "boolean");
         assert((await page.locator("#encrypted-output textarea").count()) > 0);
         assert.equal(
           await page.locator("#encrypted-output button").first().textContent(),
@@ -545,7 +557,7 @@ for (
           "--out",
           messagePath,
           ...(messages.indexOf(message) === 1
-            ? ["--compression", "deflate"]
+            ? ["--compression", "deflate", "--epk-compressed", "false"]
             : []),
         ]);
         await tab(page, "decrypt");
@@ -553,9 +565,13 @@ for (
           JSON.stringify(keyToJwk(bob, true), null, 2),
         );
         await page.locator("#decrypt-sender").fill(publicJwk);
-        await page.locator("#decrypt-message").fill(
-          await Deno.readTextFile(messagePath),
-        );
+        const cliOutput = await Deno.readTextFile(messagePath);
+        if (messages.indexOf(message) === 1) {
+          const wrapper = map(decodeCbor(decodeFragments(cliOutput)));
+          const outer = tagged(decodeCbor(bytes(wrapper.get(0))), 96);
+          assert.equal(bytes(ephemeralMap(outer).get(-3)).length, 32);
+        }
+        await page.locator("#decrypt-message").fill(cliOutput);
         await submit(page, "decrypt");
         assert.equal(
           await page.locator("#decrypted-output").textContent(),

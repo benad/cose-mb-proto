@@ -541,17 +541,31 @@ Deno.test("profile-2 transport authenticates payload metadata and rejects legacy
   );
 });
 
-Deno.test("published profile-2 example decrypts through the shared transport", async () => {
+async function publishedExampleBlocks(): Promise<string[]> {
   const document = await Deno.readTextFile(
     new URL("Single-Recipient Encrypted Message Example.md", import.meta.url),
   );
-  const blocks = Array.from(
-    document.matchAll(/```text\n([\s\S]*?)\n```/g),
+  return Array.from(
+    document.matchAll(/^```(?:[^\r\n`]*)\r?\n([\s\S]*?)\r?\n^```[ \t]*$/gm),
+  ).filter((m) => /^```\r?\n/.test(m[0])).map(
     (m) => m[1],
   );
+}
+
+Deno.test("published profile-2 example decrypts through the shared transport", async () => {
+  const blocks = await publishedExampleBlocks();
   const fragments = blocks.filter((s) => s.startsWith("C1;")).reverse().join(
     "\n",
   );
+  const wrapper = decodeCbor(decodeFragments(fragments));
+  assert(wrapper instanceof Map && wrapper.get(0) instanceof Uint8Array);
+  const profile = decodeCbor(wrapper.get(0));
+  assert(profile instanceof Tag && Array.isArray(profile.contents));
+  const recipients = profile.contents[3];
+  assert(Array.isArray(recipients) && Array.isArray(recipients[0]));
+  const header = recipients[0][1];
+  assert(header instanceof Map && header.get(-1) instanceof Map);
+  assert.equal(header.get(-1).get(-3), true);
   const receiver = fromBase64(blocks[2]), senderPublic = fromBase64(blocks[1]);
   assert.deepEqual(
     await decryptTextMessage(fragments, receiver, senderPublic),
@@ -954,6 +968,8 @@ Deno.test("CLI emits bounded lines, paired reply metadata and authenticated JSON
         ["--subject", "🌍"],
         ["--reply-to-epoch", "1", "--reply-to-id", "no"],
         ["--compression", "gzip"],
+        ["--epk-compressed", "yes"],
+        ["--epk-compressed"],
       ]
     ) {
       const invalid = await run([...encrypt, "--out", "invalid", ...options]);
@@ -964,13 +980,7 @@ Deno.test("CLI emits bounded lines, paired reply metadata and authenticated JSON
         Deno.errors.NotFound,
       );
     }
-    const document = await Deno.readTextFile(
-      new URL("Single-Recipient Encrypted Message Example.md", import.meta.url),
-    );
-    const blocks = Array.from(
-      document.matchAll(/```text\n([\s\S]*?)\n```/g),
-      (m) => m[1],
-    );
+    const blocks = await publishedExampleBlocks();
     await Deno.writeFile(join(dir, "receiver"), fromBase64(blocks[2]));
     await Deno.writeFile(join(dir, "sender-public"), fromBase64(blocks[1]));
     await Deno.writeTextFile(

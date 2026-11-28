@@ -288,7 +288,7 @@ The ciphertext field concatenates encrypted content and tag into one 113-byte by
           1: 2, / EC2 /
           -1: 1, / P-256; -1 means crv inside this key map /
           -2: h'7cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795', / ephemeral X /
-          -3: h'648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd' / ephemeral Y; no private scalar or alg /
+          -3: true / odd ephemeral Y; no private scalar or alg /
         }
       },
       h'' / no wrapped key: direct agreement has empty recipient ciphertext /
@@ -297,10 +297,10 @@ The ciphertext field concatenates encrypted content and tag into one 113-byte by
 ])
 ```
 
-The complete profile object is 221 bytes:
+The complete profile object is 188 bytes:
 
 ```cbor-diag
-h'd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795225820648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd40'
+h'd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a79522f540'
 ```
 
 The prefix d8 60 is tag 96, 84 introduces the four-element object, and 58 71 introduces the 113-byte ciphertext. The recipient structure carries only the public ephemeral key. Neither static public key, private scalar, CEK, nor conversation metadata is repeated in the outer headers. Conversation timestamp and ID are inside the signed and encrypted payload map.
@@ -311,32 +311,32 @@ Profile ID 2 belongs to the outer map, not a COSE header:
 
 ```cbor-diag
 {
-  0: h'd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795225820648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd40', / p_object: serialized COSE_Encrypt as one byte string /
+  0: h'd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a79522f540', / p_object: serialized COSE_Encrypt as one byte string /
   1: 2 / p_id: single-recipient encrypted message profile /
 }
 ```
 
-The wrapper is 227 bytes:
+The wrapper is 194 bytes:
 
 ```cbor-diag
-h'a20058ddd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795225820648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd400102'
+h'a20058bcd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a79522f5400102'
 ```
 
-The prefix a2 00 58 dd introduces a two-entry map, label 0, and a 221-byte byte string. Its content begins with the profile's d8 60 tag. The final 01 02 is profile label 1 and profile ID 2. The wrapper is outside COSE cryptographic authentication; dispatchers must validate the selected profile rather than treating wrapper fields as signed payload metadata.
+The prefix a2 00 58 bc introduces a two-entry map, label 0, and a 188-byte byte string. Its content begins with the profile's d8 60 tag. The final 01 02 is profile label 1 and profile ID 2. The wrapper is outside COSE cryptographic authentication; dispatchers must validate the selected profile rather than treating wrapper fields as signed payload metadata.
 
 ## 10. Encode the wrapper and calculate its checksum
 
-Encode all 227 wrapper bytes once using base64url, replacing + with - and / with _, and omitting trailing =. The resulting body is 303 ASCII characters:
+Encode all 194 wrapper bytes once using base64url, replacing + with - and / with _, and omitting trailing =. The resulting body is 259 ASCII characters:
 
 ```
-ogBY3dhghEOhAQOhBUxa6Yg9uFLfRabd28pYceFLHHxPoNtEDzGtO4GotKMcglQrwLs7eCk0HNLnvdRnkUOdXj5mVKEKtJ7lvl8XxmJpOurOHh4ok8q98kkEhhOtbTafJOwD8Mhedm_3MlJPqVwMdiT79HzXN8GJcf-yN9I9899jHG1KfTvxGQOdeuYagYNAogE4GCCkAQIgASFYIHzZQ-KKZTyVx_n4oCxZkMaS2bbb4-I1tQnG1t1fhKeVIlggZIo7iqey-ZTBhqj1JNc0oTcFq0Z5mB_hoBIdFAG0Fb1AAQI
+ogBYvNhghEOhAQOhBUxa6Yg9uFLfRabd28pYceFLHHxPoNtEDzGtO4GotKMcglQrwLs7eCk0HNLnvdRnkUOdXj5mVKEKtJ7lvl8XxmJpOurOHh4ok8q98kkEhhOtbTafJOwD8Mhedm_3MlJPqVwMdiT79HzXN8GJcf-yN9I9899jHG1KfTvxGQOdeuYagYNAogE4GCCkAQIgASFYIHzZQ-KKZTyVx_n4oCxZkMaS2bbb4-I1tQnG1t1fhKeVIvVAAQI
 ```
 
-CRC-32/ISO-HDLC of the complete decoded COSE_MB bytes is 02E0CA14. It is not a checksum of COSE_Encrypt alone or of the text headers. The eight-digit uppercase value includes its leading zero. This uses the polynomial, initial value, reflection, and final XOR defined in Encoded Message to Text; the algorithm check value for ASCII 123456789 is CBF43926. CRC catches accidental corruption, not malicious modification or identity forgery.
+CRC-32/ISO-HDLC of the complete decoded COSE_MB bytes is 0612F299. It is not a checksum of COSE_Encrypt alone or of the text headers. The eight-digit uppercase value includes its leading zero. This uses the polynomial, initial value, reflection, and final XOR defined in Encoded Message to Text; the algorithm check value for ASCII 123456789 is CBF43926. CRC catches accidental corruption, not malicious modification or identity forgery.
 
 ## 11. Fragment at a maximum of 140 characters
 
-Every fragment includes P and the same I=Ex01. E is omitted, selecting default encoding 0. Only fragment 1 includes S=Hello to you and C=02E0CA14. The payload ID 0 is unrelated to the fragment grouping ID Ex01.
+Every fragment includes P and the same I=Ex01. E is omitted, selecting default encoding 0. Only fragment 1 includes S=Hello to you and C=0612F299. The payload ID 0 is unrelated to the fragment grouping ID Ex01.
 
 Header 1 is 43 characters, leaving 97 body characters. Headers 2 and 3 are 17 characters, each allowing up to 123 body characters. All overall headers are below 50 characters; all individual fields are at most 20 characters, including key and equals sign but excluding semicolons. The subject field S=Hello to you is 14 characters.
 
@@ -344,12 +344,12 @@ Header 1 is 43 characters, leaving 97 body characters. Headers 2 and 3 are 17 ch
 | ---- | ----------------: | --------------: | ---------------------------: |
 | 1    |                43 |              97 |                          140 |
 | 2    |                17 |             123 |                          140 |
-| 3    |                17 |              83 |                          100 |
+| 3    |                17 |              39 |                           56 |
 
 Each following block is one complete fragment, wrapped at 80 characters for display only. Headers remain on the first line; remove the display newlines from the body to recover the original fragment. These newlines do not count toward the fragment lengths above:
 
 ```
-C1;P=1/3;I=Ex01;S=Hello to you;C=02E0CA14;;ogBY3dhghEOhAQOhBUxa6Yg9uFLfRabd28pYc
+C1;P=1/3;I=Ex01;S=Hello to you;C=0612F299;;ogBYvNhghEOhAQOhBUxa6Yg9uFLfRabd28pYc
 eFLHHxPoNtEDzGtO4GotKMcglQrwLs7eCk0HNLnvdRnkUOdXj5mVKEKtJ7lv
 ```
 
@@ -359,8 +359,7 @@ cf-yN9I9899jHG1KfTvxGQOdeuYagYNAogE4GCCkAQIgASFYIHzZQ-KKZTyV
 ```
 
 ```
-C1;P=3/3;I=Ex01;;x_n4oCxZkMaS2bbb4-I1tQnG1t1fhKeVIlggZIo7iqey-ZTBhqj1JNc0oTcFq0Z
-5mB_hoBIdFAG0Fb1AAQI
+C1;P=3/3;I=Ex01;;x_n4oCxZkMaS2bbb4-I1tQnG1t1fhKeVIvVAAQI
 ```
 
 The split occurs after body character 97 and then after another 123 characters. Neither boundary must align to a four-character base64 unit. Do not independently base64-decode individual fragment bodies. Newlines can separate copied fragments; receivers remove CR/LF from bodies before validation.
@@ -369,9 +368,9 @@ The split occurs after body character 97 and then after another 123 characters. 
 
 Parse each header beginning with C1; and ending at the first ;;. Collect fragments by I=Ex01, require consistent total 3 and effective encoding 0, and require parts 1, 2, and 3 exactly once. Order by P rather than arrival order. Retain the first fragment's subject as display metadata, not authenticated conversation data.
 
-Strip CR/LF from bodies, concatenate them in part order to the exact 303-character string in step 10, and reject invalid alphabet, impossible length, or nonzero unused trailing bits. If a decoder requires standard padding, internally append one = to this joined string; no padding is transmitted. Decode to exactly the 227 wrapper bytes from step 9.
+Strip CR/LF from bodies, concatenate them in part order to the exact 259-character string in step 10, and reject invalid alphabet, impossible length, or nonzero unused trailing bits. If a decoder requires standard padding, internally append one = to this joined string; no padding is transmitted. Decode to exactly the 194 wrapper bytes from step 9.
 
-Calculate CRC-32/ISO-HDLC over those bytes and compare with 02E0CA14 from fragment 1; reject a mismatch. CBOR-decode one complete map with no duplicate labels or trailing data. Require profile ID 2 and p_object to be a byte string; extract its 221 bytes and decode them separately to the tag-96 structure in step 8.
+Calculate CRC-32/ISO-HDLC over those bytes and compare with 0612F299 from fragment 1; reject a mismatch. CBOR-decode one complete map with no duplicate labels or trailing data. Require profile ID 2 and p_object to be a byte string; extract its 188 bytes and decode them separately to the tag-96 structure in step 8.
 
 ## 13. Decrypt profile 2, verify the signature, and recover the payload
 
@@ -407,12 +406,14 @@ The exact returned data bytes are 68656c6c6f20776f726c64, length 11, without a t
 | Payload map                  |            23 bytes | 11 data + 12 map/data framing and timestamp/ID encoding                        |
 | COSE_Sign1                   |            97 bytes | 23 payload + 64 signature + 10 framing                                         |
 | GCM ciphertext including tag |           113 bytes | 97 encrypted bytes + 16 tag                                                    |
-| Profile-2 COSE_Encrypt       |           221 bytes | 113 ciphertext + 12 IV + 64 ephemeral coordinates + 32 outer/recipient framing |
-| COSE_MB                      |           227 bytes | 221 profile bytes + 6 wrapper framing/ID bytes                                 |
-| Unpadded base64url body      |      303 characters | Encoded wrapper, not encoded profile alone                                     |
-| Three complete fragments     |      380 characters | 303 body + 77 total header characters                                          |
+| Profile-2 COSE_Encrypt       |           188 bytes | 113 ciphertext + 12 IV + 33 ephemeral coordinate/parity + 30 framing |
+| COSE_MB                      |           194 bytes | 188 profile bytes + 6 wrapper framing/ID bytes                                 |
+| Unpadded base64url body      |      259 characters | Encoded wrapper, not encoded profile alone                                     |
+| Three complete fragments     |      336 characters | 259 body + 77 total header characters                                          |
 
 These counts omit line separators between pasted fragments. Changing timestamp, payload length, optional fields, or number of parts may change CBOR length headers and transport overhead.
+
+With the same subject and CRC in one fragment, compressing `epk` saves 33 wrapper bytes (227 to 194) and 44 base64url characters (303 to 259). Including the 30-character header, the single fragment shrinks from 333 to 289 characters.
 
 ## Verification and security boundary
 

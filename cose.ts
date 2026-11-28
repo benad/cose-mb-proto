@@ -188,7 +188,10 @@ function validatePoint(key: P256Key): void {
   }
 }
 
-function coseKey(value: unknown, privateKey: boolean): P256Key {
+function coseKey(
+  value: unknown,
+  kind: "private" | "public" | "ephemeral",
+): P256Key {
   const key = map(value, "COSE_Key");
   if (key.get(1) !== 2 || key.get(-1) !== 1) {
     throw new Error("Expected an EC2 key on the P-256 curve");
@@ -196,15 +199,28 @@ function coseKey(value: unknown, privateKey: boolean): P256Key {
   if (key.has(3)) {
     throw new Error("Static and ephemeral COSE keys must omit alg");
   }
-  if (!privateKey && key.has(-4)) {
+  if (kind !== "private" && key.has(-4)) {
     throw new Error("Public COSE_Key must not contain a private scalar");
   }
+  const x = bytes(key.get(-2), "COSE_Key x", 32);
+  const encodedY = key.get(-3);
+  let y: Uint8Array<ArrayBuffer>;
+  if (kind === "ephemeral" && typeof encodedY === "boolean") {
+    const compressed = new Uint8Array(33);
+    compressed[0] = encodedY ? 3 : 2;
+    compressed.set(x, 1);
+    const point = p256.Point.fromBytes(compressed);
+    point.assertValidity();
+    y = new Uint8Array(point.toBytes(false).subarray(33));
+  } else {
+    y = bytes(encodedY, "COSE_Key y", 32);
+  }
   const result: P256Key = {
-    x: bytes(key.get(-2), "COSE_Key x", 32),
-    y: bytes(key.get(-3), "COSE_Key y", 32),
+    x,
+    y,
     format: "cose",
   };
-  if (privateKey) result.d = bytes(key.get(-4), "COSE_Key d", 32);
+  if (kind === "private") result.d = bytes(key.get(-4), "COSE_Key d", 32);
   if (key.has(4)) result.operations = operations(key.get(4), "cose");
   validatePoint(result);
   return result;
@@ -260,7 +276,7 @@ function readKey(buffer: Uint8Array, privateKey: boolean): P256Key {
     }
     return jwkKey(value, privateKey);
   }
-  return coseKey(decodeCbor(buffer), privateKey);
+  return coseKey(decodeCbor(buffer), privateKey ? "private" : "public");
 }
 
 function checkUsage(
@@ -516,11 +532,13 @@ export async function encryptMessage(
   message: string,
   senderPrivate: Uint8Array,
   recipientPublic: Uint8Array,
+  epkCompressed = true,
 ): Promise<Uint8Array> {
   return await encryptPayloadBytes(
     await encodeCbor(message),
     senderPrivate,
     recipientPublic,
+    epkCompressed,
   );
 }
 
@@ -528,6 +546,7 @@ export async function encryptPayloadBytes(
   payload: Uint8Array,
   senderPrivate: Uint8Array,
   recipientPublic: Uint8Array,
+  epkCompressed = true,
 ): Promise<Uint8Array> {
   const recipient = await importKey(readKey(recipientPublic, false), "agree");
   const signed = await signPayloadBytes(payload, senderPrivate);
@@ -540,6 +559,8 @@ export async function encryptPayloadBytes(
     await crypto.subtle.exportKey("jwk", ephemeral.publicKey),
     false,
   );
+  const epkMap = new Map<number, unknown>(publicMap(epk));
+  if (epkCompressed) epkMap.set(-3, (epk.y[31] & 1) !== 0);
   const key = await contentKey(ephemeral.privateKey, recipient, "encrypt");
   const protectedBytes = await encodeCbor(new Map([[1, 3]]));
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -560,7 +581,7 @@ export async function encryptPayloadBytes(
       new Uint8Array(ciphertext),
       [[
         empty,
-        new Map<number, unknown>([[1, -25], [-1, publicMap(epk)]]),
+        new Map<number, unknown>([[1, -25], [-1, epkMap]]),
         empty,
       ]],
     ]),
@@ -621,7 +642,7 @@ export async function decryptPayloadBytes(
   }
   bytes(entry[2], "Recipient ciphertext", 0);
   const ephemeral = await importKey(
-    coseKey(recipientHeader.get(-1), false),
+    coseKey(recipientHeader.get(-1), "ephemeral"),
     "agree",
   );
   const key = await contentKey(recipient, ephemeral, "decrypt");

@@ -63,6 +63,7 @@ const commands = {
       "reply-to-id",
       "fragment-size",
       "compression",
+      "epk-compressed",
       "output-format",
       "encoding",
     ],
@@ -79,7 +80,7 @@ const help = `Usage:
     C1 profile-1 exports also accept --subject TEXT, --crc32, --fragment-size CHARACTERS, --encoding 0|1|2.
   encrypt --sender-private PATH --recipient-public PATH (--in TEXT_FILE | --text MESSAGE) --out OUTPUT_FILE
     [--subject TEXT] [--crc32] [--reply-to-epoch SECONDS --reply-to-id INTEGER] [--fragment-size CHARACTERS] [--encoding 0|1|2]
-    [--compression off|deflate|auto] [--output-format text|aztec]
+    [--compression off|deflate|auto] [--epk-compressed true|false] [--output-format text|aztec]
   decrypt --recipient-private PATH --sender-public PATH --in INPUT_FILE [--out TEXT_FILE] [--json]
 
 Use --help for help. Existing output files are never overwritten.
@@ -92,6 +93,7 @@ Text encoding defaults to 0 (base64url); 1 selects Z85 and 2 selects Base2048.
 Fragment size includes headers; default 0 emits one unlimited fragment.
 Messages carry current epoch seconds and integer ID 0.
 Compression defaults to auto: use zlib-wrapped Deflate only if its data bytes are smaller.
+Ephemeral public keys are compressed by default; use --epk-compressed false for older readers.
 Compressed messages are limited to 10 MiB (10,485,760 bytes) of decompressed UTF-8 data.
 Decryption displays verified time, ID and text, or named payload fields with --json.
 Legacy bare COSE ciphertext is not accepted.
@@ -281,15 +283,20 @@ export async function main(args: string[] = Deno.args): Promise<void> {
         throw new Error("Specify both --reply-to-epoch and --reply-to-id");
       }
       const compression = options.get("compression") ?? "auto";
+      const epkCompressed = options.get("epk-compressed") ?? "true";
       if (
         compression !== "off" && compression !== "deflate" &&
         compression !== "auto"
       ) {
         throw new Error("--compression must be off, deflate or auto");
       }
+      if (epkCompressed !== "true" && epkCompressed !== "false") {
+        throw new Error("--epk-compressed must be true or false");
+      }
       const encoding: MessageOptions = {
         ...encodingOptions(),
         compression,
+        epkCompressed: epkCompressed === "true",
         ...(options.has("reply-to-epoch")
           ? {
             replyTo: {

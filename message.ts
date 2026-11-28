@@ -35,6 +35,7 @@ export interface EncodingOptions {
 export interface MessageOptions extends EncodingOptions {
   replyTo?: ReplyTo;
   compression?: CompressionMode;
+  epkCompressed?: boolean;
 }
 
 export type CompressionMode = "off" | "deflate" | "auto";
@@ -628,6 +629,7 @@ export async function encryptMessageProfile(
     payload,
     senderPrivate,
     normalizePublicKey(recipientPublic),
+    options.epkCompressed,
   );
   return await encodeProfileBytes(encrypted, 2);
 }
