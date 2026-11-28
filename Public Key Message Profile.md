@@ -1,6 +1,6 @@
 # Public Key Message Profile
 
-Document version ID: 20261115
+Document version ID: 20261128
 
 Profile ID: 1
 

@@ -1,6 +1,6 @@
 # Single-Recipient Encrypted Message Profile
 
-Document version ID: 20261111
+Document version ID: 20261128-2
 
 Payload is described in [Encrypted Message Payload](Encrypted%20Message%20Payload.md)
 

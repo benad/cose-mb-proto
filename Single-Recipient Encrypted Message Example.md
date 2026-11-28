@@ -1,6 +1,6 @@
 # Single-Recipient Encrypted Message Example
 
-Document version ID: 20261115
+Document version ID: 20261128-2
 
 This end-to-end example follows [Encrypted Message Payload](Encrypted%20Message%20Payload.md), [COSE-MB Messages](COSE-MB%20Messages.md), and [Encoded Message to Text](Encoded%20Message%20to%20Text.md), version 20261115. The linked [Single-Recipient Encrypted Message Profile](Singe-Recipient%20Encrypted%20Message%20Profile.md) currently declares version 20261111; its cryptographic construction is used here as profile ID 2.
 

@@ -1,6 +1,6 @@
 # COSE for Micro-Blogging Messages
 
-Document version ID: 20261115
+Document version ID: 20261128
 
 Then encoding process is as follows:
 
