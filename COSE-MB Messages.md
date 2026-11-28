@@ -11,7 +11,7 @@ Then encoding process is as follows:
 
 ## `COSE_MB` Object
 
-```CDDL
+```cddl
 COSE_MB = {
     &(p_object: 0) => bstr,
     &(p_id: 1) => int,

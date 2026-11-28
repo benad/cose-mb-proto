@@ -29,7 +29,7 @@ Payload = {
 
 Example:
 
-```cbor
+```cbor-diag
 {
   0: 'hello world'
 }
@@ -47,7 +47,7 @@ print(binascii.hexlify(zlib.compress(sys.stdin.buffer.read())).decode())
 '
 ```
 
-```cbor
+```cbor-diag
 {
   0: h'789ccb48cdc9c95728cf2fca4901001a0b045d',
   2: 1

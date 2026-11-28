@@ -6,7 +6,7 @@ Profile ID: 1
 
 See COSE_Key.
 
-```cbor
+```cbor-diag
 {
   1: 2,     / kty = EC2 /
   -1: 1,    / crv = P-256 /

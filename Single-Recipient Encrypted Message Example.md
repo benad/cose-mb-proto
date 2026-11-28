@@ -26,11 +26,11 @@ Validate EC2 (`1: 2`), P-256 (`-1: 1`), 32-byte coordinates, a finite point on t
 
 ### 1.1 Sender private keypair
 
-```text
+```
 pQECIAEhWCBj+d1Lt+SqyT6/eIaNSgt/kbEFRpbnf+LInBJtDUy/4iJYILC47MeeuHk9nlJXzXwfmvXrlw43k+2f/buktKxc1D1kI1ggw9OeesN9Quo3WixBIalrpVxDGVdR8icr+M40akuUTQc=
 ```
 
-```cbor
+```cbor-diag
 {
   1: 2, / kty: EC2 /
   -1: 1, / crv: P-256 /
@@ -42,11 +42,11 @@ pQECIAEhWCBj+d1Lt+SqyT6/eIaNSgt/kbEFRpbnf+LInBJtDUy/4iJYILC47MeeuHk9nlJXzXwfmvXr
 
 ### 1.2 Sender public key
 
-```text
+```
 pAECIAEhWCBj+d1Lt+SqyT6/eIaNSgt/kbEFRpbnf+LInBJtDUy/4iJYILC47MeeuHk9nlJXzXwfmvXrlw43k+2f/buktKxc1D1k
 ```
 
-```cbor
+```cbor-diag
 {
   1: 2, / kty: EC2 /
   -1: 1, / crv: P-256 /
@@ -57,11 +57,11 @@ pAECIAEhWCBj+d1Lt+SqyT6/eIaNSgt/kbEFRpbnf+LInBJtDUy/4iJYILC47MeeuHk9nlJXzXwfmvXr
 
 ### 1.3 Receiver private keypair
 
-```text
+```
 pQECIAEhWCDG6rY/pJKSCGRewCOM3cTmONZG7BRi/DiWZfRedN8g7SJYIElTgaeTTXF8EWqQiX8kA1fQwGLt4NGYtBPsm7atId5ZI1gglxxN/wT6UsST91L311soG+Vuee+CsVx0MPK3plm2ve4=
 ```
 
-```cbor
+```cbor-diag
 {
   1: 2, / kty: EC2 /
   -1: 1, / crv: P-256 /
@@ -73,11 +73,11 @@ pQECIAEhWCDG6rY/pJKSCGRewCOM3cTmONZG7BRi/DiWZfRedN8g7SJYIElTgaeTTXF8EWqQiX8kA1fQ
 
 ### 1.4 Receiver public key
 
-```text
+```
 pAECIAEhWCDG6rY/pJKSCGRewCOM3cTmONZG7BRi/DiWZfRedN8g7SJYIElTgaeTTXF8EWqQiX8kA1fQwGLt4NGYtBPsm7atId5Z
 ```
 
-```cbor
+```cbor-diag
 {
   1: 2, / kty: EC2 /
   -1: 1, / crv: P-256 /
@@ -92,13 +92,13 @@ The sender uses its static private scalar for signing, not for outgoing ECDH. Th
 
 The application input is exactly lowercase hello world: 11 UTF-8 bytes, no newline, BOM, or terminating zero. Its data member is a byte string, not a CBOR text string:
 
-```cbor
+```cbor-diag
 h'68656c6c6f20776f726c64'
 ```
 
 The timestamp is a fixed illustrative 2026-11-15T00:00:00Z, represented by epoch seconds 1794700800 under CBOR tag 1, matching the payload CDDL time type. Payload ID is integer 0. MIME is omitted, defaulting to text/plain; charset=UTF-8. Compression is omitted, defaulting to no compression; the data is not compressed.
 
-```cbor
+```cbor-diag
 {
   0: h'68656c6c6f20776f726c64', / data: 11 UTF-8 bytes, exactly lowercase hello world /
   3: 1(1794700800), / timestamp: tag 1 epoch seconds, 2026-11-15T00:00:00Z /
@@ -108,7 +108,7 @@ The timestamp is a fixed illustrative 2026-11-15T00:00:00Z, represented by epoch
 
 The serialized payload is 23 bytes:
 
-```cbor
+```cbor-diag
 h'a3004b68656c6c6f20776f726c6403c11a6af8f6000400'
 ```
 
@@ -118,13 +118,13 @@ The byte a3 introduces a three-entry map; 00 is data label 0, 4b introduces the 
 
 The protected signing header is:
 
-```cbor
+```cbor-diag
 {1: -9} / ESP256: ECDSA P-256 with SHA-256 /
 ```
 
 Its encoding is a10128. Construct deterministic Sig_structure from the original protected bytes and serialized payload map:
 
-```cbor
+```cbor-diag
 [
   "Signature1", / context /
   h'a10128', / body_protected /
@@ -135,19 +135,19 @@ Its encoding is a10128. Construct deterministic Sig_structure from the original 
 
 This array encodes to 41 bytes:
 
-```cbor
+```cbor-diag
 h'846a5369676e61747572653143a101284057a3004b68656c6c6f20776f726c6403c11a6af8f6000400'
 ```
 
 Its SHA-256 digest is:
 
-```cbor
+```cbor-diag
 h'84d1fb393a5e0a28c8c583b373b4e106a175a8de9d0a4047c46af55cb237538c'
 ```
 
 ECDSA signs the Sig_structure bytes with SHA-256; the digest is shown for explanation, not as a separately double-hashed input. The raw signature is 64 bytes, r followed by s, not DER:
 
-```cbor
+```cbor-diag
 [
   h'b7ac55ae1f0be6bf0e8e7f5635e847bfbb649550e26c63e60df2df198c7deaa5', / r: 32 bytes /
   h'9241a16fdb1329f6e26b18cde4d8dc66e9585160f02f4a8a364f04008543875f' / s: 32 bytes /
@@ -156,7 +156,7 @@ ECDSA signs the Sig_structure bytes with SHA-256; the digest is shown for explan
 
 ## 4. Encode the signed inner object
 
-```cbor
+```cbor-diag
 18([ / COSE_Sign1 /
   h'a10128', / protected: ESP256 header bytes /
   {}, / empty unprotected map /
@@ -167,7 +167,7 @@ ECDSA signs the Sig_structure bytes with SHA-256; the digest is shown for explan
 
 The complete COSE_Sign1 serialization, including tag 18, is 97 bytes. This is the plaintext input to AES-GCM:
 
-```cbor
+```cbor-diag
 h'd28443a10128a057a3004b68656c6c6f20776f726c6403c11a6af8f60004005840b7ac55ae1f0be6bf0e8e7f5635e847bfbb649550e26c63e60df2df198c7deaa59241a16fdb1329f6e26b18cde4d8dc66e9585160f02f4a8a364f04008543875f'
 ```
 
@@ -175,7 +175,7 @@ h'd28443a10128a057a3004b68656c6c6f20776f726c6403c11a6af8f60004005840b7ac55ae1f0b
 
 The generated ephemeral keypair for this test is:
 
-```cbor
+```cbor-diag
 {
   1: 2, / EC2 /
   -1: 1, / P-256 /
@@ -187,7 +187,7 @@ The generated ephemeral keypair for this test is:
 
 The sender computes d_e Q_r using the ephemeral private scalar and receiver static public point. ECDH returns the shared point's X coordinate as exactly 32 big-endian bytes:
 
-```cbor
+```cbor-diag
 h'7b90d25827d26ffae297a8810cb76ab180075d2d8146b3884844a3566601bcef'
 ```
 
@@ -197,7 +197,7 @@ The receiver computes d_r Q_e using its static private scalar and the transmitte
 
 The fixed COSE_KDF_Context is:
 
-```cbor
+```cbor-diag
 [
   3, / AlgorithmID: A256GCM, not recipient algorithm -25 /
   [null, null, null], / PartyUInfo /
@@ -208,25 +208,25 @@ The fixed COSE_KDF_Context is:
 
 Its 15 serialized bytes are HKDF info:
 
-```cbor
+```cbor-diag
 h'840383f6f6f683f6f6f68219010040'
 ```
 
 HKDF-SHA-256 uses IKM = Z, an empty salt, this info, and 32 output bytes. For Extract the empty salt is equivalent to a 32-byte all-zero salt. PRK = HMAC-SHA-256(salt, Z):
 
-```cbor
+```cbor-diag
 h'd8c5d21ec4c2573cff3c3983824b1840d7b8fe4a8a87facd7c5c266b4d840705'
 ```
 
 One Expand block suffices: T(1) = HMAC-SHA-256(PRK, info || 01). The appended 01 is a raw counter byte, not a new CBOR value. Its 16 input bytes are:
 
-```cbor
+```cbor-diag
 h'840383f6f6f683f6f6f6821901004001'
 ```
 
 The entire 32-byte T(1) is the CEK:
 
-```cbor
+```cbor-diag
 h'c20a5363dd8fc52743b232b72c9a4da64d0437aad85e58197e0908531528c1bd'
 ```
 
@@ -236,37 +236,37 @@ Z, PRK, and CEK are local secrets, disclosed only in this example; they are not 
 
 The outer protected header is:
 
-```cbor
+```cbor-diag
 {1: 3} / A256GCM /
 ```
 
 Its encoded bytes are a10103. The Enc_structure is:
 
-```cbor
+```cbor-diag
 ["Encrypt", h'a10103', h''] / context, original outer protected bytes, empty external AAD /
 ```
 
 Its 14 serialized bytes are GCM AAD:
 
-```cbor
+```cbor-diag
 h'8367456e637279707443a1010340'
 ```
 
 The fresh IV is 12 bytes:
 
-```cbor
+```cbor-diag
 h'5ae9883db852df45a6dddbca'
 ```
 
 AES-256-GCM encrypts the 97-byte signed object using this IV, CEK, AAD, and a 128-bit tag. The encrypted content alone is 97 bytes:
 
-```cbor
+```cbor-diag
 h'e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d2'
 ```
 
 The 16-byte authentication tag is:
 
-```cbor
+```cbor-diag
 h'3df3df631c6d4a7d3bf119039d7ae61a'
 ```
 
@@ -274,7 +274,7 @@ The ciphertext field concatenates encrypted content and tag into one 113-byte by
 
 ## 8. Serialize profile 2: COSE_Encrypt
 
-```cbor
+```cbor-diag
 96([ / COSE_Encrypt /
   h'a10103', / protected: encoded {1: 3}, selecting A256GCM /
   {5: h'5ae9883db852df45a6dddbca'}, / unprotected IV: 12 bytes /
@@ -299,7 +299,7 @@ The ciphertext field concatenates encrypted content and tag into one 113-byte by
 
 The complete profile object is 221 bytes:
 
-```cbor
+```cbor-diag
 h'd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795225820648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd40'
 ```
 
@@ -309,7 +309,7 @@ The prefix d8 60 is tag 96, 84 introduces the four-element object, and 58 71 int
 
 Profile ID 2 belongs to the outer map, not a COSE header:
 
-```cbor
+```cbor-diag
 {
   0: h'd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795225820648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd40', / p_object: serialized COSE_Encrypt as one byte string /
   1: 2 / p_id: single-recipient encrypted message profile /
@@ -318,7 +318,7 @@ Profile ID 2 belongs to the outer map, not a COSE header:
 
 The wrapper is 227 bytes:
 
-```cbor
+```cbor-diag
 h'a20058ddd8608443a10103a1054c5ae9883db852df45a6dddbca5871e14b1c7c4fa0db440f31ad3b81a8b4a31c82542bc0bb3b7829341cd2e7bdd46791439d5e3e6654a10ab49ee5be5f17c662693aeace1e1e2893cabdf249048613ad6d369f24ec03f0c85e766ff732524fa95c0c7624fbf47cd737c18971ffb237d23df3df631c6d4a7d3bf119039d7ae61a818340a201381820a4010220012158207cd943e28a653c95c7f9f8a02c5990c692d9b6dbe3e235b509c6d6dd5f84a795225820648a3b8aa7b2f994c186a8f524d734a13705ab4679981fe1a0121d1401b415bd400102'
 ```
 
@@ -328,7 +328,7 @@ The prefix a2 00 58 dd introduces a two-entry map, label 0, and a 221-byte byte 
 
 Encode all 227 wrapper bytes once using base64url, replacing + with - and / with _, and omitting trailing =. The resulting body is 303 ASCII characters:
 
-```text
+```
 ogBY3dhghEOhAQOhBUxa6Yg9uFLfRabd28pYceFLHHxPoNtEDzGtO4GotKMcglQrwLs7eCk0HNLnvdRnkUOdXj5mVKEKtJ7lvl8XxmJpOurOHh4ok8q98kkEhhOtbTafJOwD8Mhedm_3MlJPqVwMdiT79HzXN8GJcf-yN9I9899jHG1KfTvxGQOdeuYagYNAogE4GCCkAQIgASFYIHzZQ-KKZTyVx_n4oCxZkMaS2bbb4-I1tQnG1t1fhKeVIlggZIo7iqey-ZTBhqj1JNc0oTcFq0Z5mB_hoBIdFAG0Fb1AAQI
 ```
 
@@ -348,17 +348,17 @@ Header 1 is 43 characters, leaving 97 body characters. Headers 2 and 3 are 17 ch
 
 Each following block is one complete fragment, wrapped at 80 characters for display only. Headers remain on the first line; remove the display newlines from the body to recover the original fragment. These newlines do not count toward the fragment lengths above:
 
-```text
+```
 C1;P=1/3;I=Ex01;S=Hello to you;C=02E0CA14;;ogBY3dhghEOhAQOhBUxa6Yg9uFLfRabd28pYc
 eFLHHxPoNtEDzGtO4GotKMcglQrwLs7eCk0HNLnvdRnkUOdXj5mVKEKtJ7lv
 ```
 
-```text
+```
 C1;P=2/3;I=Ex01;;l8XxmJpOurOHh4ok8q98kkEhhOtbTafJOwD8Mhedm_3MlJPqVwMdiT79HzXN8GJ
 cf-yN9I9899jHG1KfTvxGQOdeuYagYNAogE4GCCkAQIgASFYIHzZQ-KKZTyV
 ```
 
-```text
+```
 C1;P=3/3;I=Ex01;;x_n4oCxZkMaS2bbb4-I1tQnG1t1fhKeVIlggZIo7iqey-ZTBhqj1JNc0oTcFq0Z
 5mB_hoBIdFAG0Fb1AAQI
 ```
@@ -383,7 +383,7 @@ Decode the recovered tag-18 object, require ESP256 and a 64-byte signature, and 
 
 Only after both authentications succeed, decode the payload bytes to the following map:
 
-```cbor
+```cbor-diag
 {
   0: h'68656c6c6f20776f726c64', / data: 11 UTF-8 bytes, exactly lowercase hello world /
   3: 1(1794700800), / timestamp: tag 1 epoch seconds, 2026-11-15T00:00:00Z /
@@ -393,7 +393,7 @@ Only after both authentications succeed, decode the payload bytes to the followi
 
 Validate data as a byte string, timestamp as tag-1 epoch time, and ID as an integer. Since compression is absent, do not decompress. Since MIME is absent, interpret the bytes as text/plain; charset=UTF-8, validating UTF-8:
 
-```cbor
+```cbor-diag
 "hello world" / decoded application text; not the serialized payload object /
 ```
 
